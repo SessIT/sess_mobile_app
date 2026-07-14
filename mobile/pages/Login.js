@@ -4,6 +4,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 
 const INDIGO = '#1E3A8A'; // SESS indigo — original theme color
+const API_URL = 'http://10.0.2.2:4000/api'; // emulator → PC localhost
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('');
@@ -12,19 +13,32 @@ export default function LoginScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
  
-  const handleLogin = () => {
-    setError(null);
-    if (!username.trim() || !password) {
-      setError('Please enter username and password');
+  const handleLogin = async () => {
+  setError(null);
+  if (!username.trim() || !password) {
+    setError('Please enter username and password');
+    return;
+  }
+  setBusy(true);
+  try {
+    const res = await fetch(`${API_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username.trim(), password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.message || 'Login failed');
       return;
     }
-    setBusy(true);
-    // TODO (next step): call backend  POST /api/auth/login
-    setTimeout(() => {
-      setBusy(false);
-      Alert.alert('UI Test OK ✅', `Username: ${username}\n(API connect next step)`);
-    }, 800);
-  };
+    Alert.alert('Welcome! 🎉', `${data.fullName}\nRoles: ${data.roles.join(', ')}`);
+    // Day 2: token save + navigate to Dashboard
+  } catch (e) {
+    setError('Cannot reach server. Is backend running?');
+  } finally {
+    setBusy(false);
+  }
+};
 
   return (
     <KeyboardAvoidingView
