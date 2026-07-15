@@ -5,6 +5,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import LoginScreen from './screens/Login';
 import DashboardScreen from './screens/DashboardScreen';
 import { getAuth } from './lib/auth';
+import UsersScreen from './screens/UserScreen';
+import CreateUserScreen from './screens/CreateUserScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -45,6 +47,8 @@ export default function App() {
           component={DashboardScreen}
           initialParams={savedAuth ? { fullName: savedAuth.fullName, roles: savedAuth.roles } : undefined}
         />
+        <Stack.Screen name="Users" component={UsersScreen} />
+        <Stack.Screen name="CreateUser" component={CreateUserScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
