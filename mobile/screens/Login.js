@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import { saveAuth } from '../lib/auth';
 
 const INDIGO = '#1E3A8A'; // SESS indigo — original theme color
-const API_URL = 'http://10.0.2.2:4000/api'; // emulator → PC localhost
+// const API_URL = 'http://10.0.2.2:4000/api'; // emulator → PC localhost
+const API_URL = 'http://192.168.68.105:4000/api'; // PC WiFi IP — phone + emulator rendukum work aagum
 
-export default function LoginScreen() {
+export default function LoginScreen({ navigation }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -31,8 +33,9 @@ export default function LoginScreen() {
       setError(data.message || 'Login failed');
       return;
     }
-    Alert.alert('Welcome! 🎉', `${data.fullName}\nRoles: ${data.roles.join(', ')}`);
-    // Day 2: token save + navigate to Dashboard
+    await saveAuth(data);
+    // Alert.alert('Welcome! 🎉', `${data.fullName}\nRoles: ${data.roles.join(', ')}`);
+    navigation.replace('Dashboard', { fullName: data.fullName, roles: data.roles });
   } catch (e) {
     setError('Cannot reach server. Is backend running?');
   } finally {
