@@ -15,6 +15,7 @@ model User {
   isActive     Boolean    @default(true) @map("is_active")
   createdAt    DateTime   @default(now()) @map("created_at")
   roles        UserRole[]
+  attendance   AttendanceSession[]
 
   @@map("users")
 }
@@ -35,4 +36,27 @@ model UserRole {
 
   @@id([userId, roleId])
   @@map("user_roles")
+}
+
+model AttendanceSession {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  punchInTime  DateTime  @map("punch_in_time")
+  punchOutTime DateTime? @map("punch_out_time")
+  punchInLat   Float?    @map("punch_in_lat")
+  punchInLng   Float?    @map("punch_in_lng")
+  punchInAcc   Float?    @map("punch_in_acc")
+  punchOutLat  Float?    @map("punch_out_lat")
+  punchOutLng  Float?    @map("punch_out_lng")
+  punchOutAcc  Float?    @map("punch_out_acc")
+  workingHours Float?    @map("working_hours")
+  isLate       Boolean   @default(false) @map("is_late")
+  user         User      @relation(fields: [userId], references: [id])
+  punchInPhoto  String? @map("punch_in_photo")
+  punchOutPhoto String? @map("punch_out_photo")
+  punchInAddress  String? @map("punch_in_address")
+  punchOutAddress String? @map("punch_out_address")
+
+  @@index([userId, punchInTime])
+  @@map("attendance_session")
 }
