@@ -16,6 +16,7 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   roles        UserRole[]
   attendance   AttendanceSession[]
+  phone        String?    @unique
 
   @@map("users")
 }
@@ -59,4 +60,16 @@ model AttendanceSession {
 
   @@index([userId, punchInTime])
   @@map("attendance_session")
+}
+
+model OtpCode {
+  id        Int      @id @default(autoincrement())
+  phone     String
+  codeHash  String   @map("code_hash")
+  expiresAt DateTime @map("expires_at")
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([phone])
+  @@map("otp_codes")
 }
