@@ -29,6 +29,7 @@ export default function DashboardScreen({ route, navigation }) {
     isAdmin && { key: 'users', label: 'User Management', sub: 'Create & manage accounts', icon: 'group', screen: 'Users' },
     { key: 'punch', label: 'Punch In / Out', sub: 'Selfie + GPS attendance', icon: 'fingerprint', screen: 'Punch' },
     { key: 'myatt', label: 'My Attendance', sub: 'History & working hours', icon: 'event-available' },
+    isAdmin && { key: 'trail', label: 'Team Trail', sub: 'Employee location timeline', icon: 'map', screen: 'TeamTrail' },
   ].filter(Boolean);
 
   return (

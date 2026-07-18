@@ -50,6 +50,8 @@ router.post('/punch-in', async (req, res) => {
 
     const now = new Date();
     const { lat, lng, acc, photoBase64, address } = req.body || {};
+    if (num(req.body?.lat) == null || num(req.body?.lng) == null)
+      return res.status(400).json({ message: 'Location is required for punch In' });
     const session = await prisma.attendanceSession.create({
       data: {
         userId: req.user.sub,
@@ -76,6 +78,8 @@ router.post('/punch-out', async (req, res) => {
 
     const now = new Date();
     const { lat, lng, acc, photoBase64, address } = req.body || {};
+    if (num(req.body?.lat) == null || num(req.body?.lng) == null)
+      return res.status(400).json({ message: 'Location is required for punch out' });
     const hours = (now - session.punchInTime) / 3600000;
     const updated = await prisma.attendanceSession.update({
       where: { id: session.id },

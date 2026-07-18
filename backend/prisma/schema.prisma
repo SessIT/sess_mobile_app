@@ -17,6 +17,7 @@ model User {
   roles        UserRole[]
   attendance   AttendanceSession[]
   phone        String?    @unique
+  locationLogs LocationLog[]
 
   @@map("users")
 }
@@ -72,4 +73,19 @@ model OtpCode {
 
   @@index([phone])
   @@map("otp_codes")
+}
+
+model LocationLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  lat        Float
+  lng        Float
+  acc        Float?
+  address    String?
+  capturedAt DateTime @map("captured_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, capturedAt])
+  @@map("location_log")
 }
