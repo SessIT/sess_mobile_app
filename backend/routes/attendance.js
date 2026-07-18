@@ -29,27 +29,32 @@ function todayWindowIST() {
 
 const num = (v) => (v !== undefined && v !== null && v !== '' ? parseFloat(v) : null);
 
+// GET /api/attendance/today — ALL today sessions
 router.get('/today', async (req, res) => {
   try {
     const { start, end } = todayWindowIST();
-    const session = await prisma.attendanceSession.findFirst({
+    const sessions = await prisma.attendanceSession.findMany({
       where: { userId: req.user.sub, punchInTime: { gte: start, lt: end } },
-      orderBy: { punchInTime: 'desc' },
+      orderBy: { punchInTime: 'asc' },
     });
-    res.json(session || null);
+    res.json(sessions);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
 router.post('/punch-in', async (req, res) => {
   try {
     const { start, end, lateCutoff } = todayWindowIST();
-    const existing = await prisma.attendanceSession.findFirst({
+    // Multi-punch: open session irundha mattum block (out pannama in panna mudiyadhu)
+    const openSession = await prisma.attendanceSession.findFirst({
+      where: { userId: req.user.sub, punchInTime: { gte: start, lt: end }, punchOutTime: null },
+    });
+    if (openSession) return res.status(409).json({ message: 'Punch out first, then punch in again' });
+    const sessionCount = await prisma.attendanceSession.count({
       where: { userId: req.user.sub, punchInTime: { gte: start, lt: end } },
     });
-    if (existing) return res.status(409).json({ message: 'Already punched in today' });
 
     const now = new Date();
-    const { lat, lng, acc, photoBase64, address } = req.body || {};
+    const { lat, lng, acc, photoBase64, address, siteName } = req.body || {};
     if (num(req.body?.lat) == null || num(req.body?.lng) == null)
       return res.status(400).json({ message: 'Location is required for punch In' });
     const session = await prisma.attendanceSession.create({
@@ -59,7 +64,8 @@ router.post('/punch-in', async (req, res) => {
         punchInLat: num(lat), punchInLng: num(lng), punchInAcc: num(acc),
         punchInPhoto: savePhoto(req.user.sub, photoBase64),
         punchInAddress: address || null,
-        isLate: now > lateCutoff,
+        isLate: sessionCount === 0 && now > lateCutoff,
+        siteName: (siteName || 'SESS').trim().slice(0, 60),
       },
     });
     res.status(201).json(session);
@@ -70,11 +76,10 @@ router.post('/punch-out', async (req, res) => {
   try {
     const { start, end } = todayWindowIST();
     const session = await prisma.attendanceSession.findFirst({
-      where: { userId: req.user.sub, punchInTime: { gte: start, lt: end } },
+      where: { userId: req.user.sub, punchInTime: { gte: start, lt: end }, punchOutTime: null },
       orderBy: { punchInTime: 'desc' },
     });
-    if (!session) return res.status(400).json({ message: 'Not punched in today' });
-    if (session.punchOutTime) return res.status(409).json({ message: 'Already punched out today' });
+    if (!session) return res.status(400).json({ message: 'No open session. Punch in first.' });
 
     const now = new Date();
     const { lat, lng, acc, photoBase64, address } = req.body || {};
@@ -92,6 +97,19 @@ router.post('/punch-out', async (req, res) => {
       },
     });
     res.json(updated);
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// GET /api/attendance/my?days=30 — my history
+router.get('/my', async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 30, 90);
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+    const sessions = await prisma.attendanceSession.findMany({
+      where: { userId: req.user.sub, punchInTime: { gte: since } },
+      orderBy: { punchInTime: 'desc' },
+    });
+    res.json(sessions);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 

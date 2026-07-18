@@ -2,7 +2,7 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from './api';
 
-export const TRACK_INTERVAL_MIN = 15; // ⚡ test-ku 1, aprum 15
+export const TRACK_INTERVAL_MIN = 5; // ⚡ test-ku 1, every 5 mins capture record
 const QUEUE_KEY = 'sess_loc_queue';
 const MAX_QUEUE = 500; // ~5 days safety cap
 

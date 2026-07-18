@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  Modal, Image, ScrollView, Alert,
+  Modal, Image, ScrollView, Alert, TextInput,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -24,39 +24,15 @@ const fmtDuration = (h) => {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 };
 
-/* ---------- Punch widget card (tappable) ---------- */
-const PunchCard = ({ label, color, photo, time, address, late, active, onPress }) => (
-  <TouchableOpacity
-    style={[styles.pCard, !active && styles.pCardEmpty]}
-    activeOpacity={active ? 0.85 : 1}
-    onPress={active ? onPress : undefined}
-  >
-    <View style={[styles.pBar, { backgroundColor: active ? color : '#D1D5DB' }]} />
-    <View style={styles.pHead}>
-      <Text style={[styles.pLabel, { color: active ? color : '#9CA3AF' }]}>{label}</Text>
-      {active && <MaterialIcons name="open-in-full" size={13} color="#9CA3AF" />}
-    </View>
-    {photo ? (
-      <Image source={{ uri: photo }} style={styles.pPhoto} />
-    ) : (
-      <View style={[styles.pPhoto, styles.pPhotoEmpty]}>
-        <MaterialIcons name="schedule" size={26} color="#C4C4C4" />
-      </View>
-    )}
-    <View style={styles.pTimeRow}>
-      <Text style={[styles.pTime, !active && { color: '#9CA3AF' }]}>{time}</Text>
-      {late ? <View style={styles.lateBadge}><Text style={styles.lateText}>LATE</Text></View> : null}
-    </View>
-    <View style={styles.pAddrRow}>
-      <MaterialIcons name="location-on" size={13} color={active ? '#6B7280' : '#C4C4C4'} />
-      <Text style={styles.pAddr} numberOfLines={2}>{address || (active ? 'No address' : 'Waiting…')}</Text>
-    </View>
-  </TouchableOpacity>
-);
+const sessionLabel = (s, i) => {
+  const name = (s.siteName || 'SESS').trim();
+  if (name === 'SESS') return i === 0 ? 'SESS' : `SESS • ${i + 1}`;
+  return `${name}`;
+};
 
 export default function PunchScreen({ navigation }) {
   const [now, setNow] = useState(new Date());
-  const [session, setSession] = useState(null);
+  const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [pendingPhoto, setPendingPhoto] = useState(null);
@@ -67,7 +43,8 @@ export default function PunchScreen({ navigation }) {
   const [locReady, setLocReady] = useState(false);
   const [pending, setPending] = useState(0);
   const [locModal, setLocModal] = useState(false);
-  const [detailModal, setDetailModal] = useState(null); // 'in' | 'out' | null
+  const [detailModal, setDetailModal] = useState(null); // session object | null
+  const [siteName, setSiteName] = useState('SESS');
   const cameraRef = useRef(null);
 
   useEffect(() => {
@@ -82,15 +59,23 @@ export default function PunchScreen({ navigation }) {
 
   const load = useCallback(async () => {
     try {
-      const s = await api('/attendance/today');
-      setSession(s);
-      if (s && !s.punchOutTime) startTracking(); else stopTracking();
+      const list = await api('/attendance/today');
+      const arr = Array.isArray(list) ? list : [];
+      setSessions(arr);
+      const open = arr.find(s => !s.punchOutTime);
+      if (open) startTracking(); else stopTracking();
     }
     catch (e) { Alert.alert('Error', e.message); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  /* ---------- derived ---------- */
+  const openSession = sessions.find(s => !s.punchOutTime) || null;
+  const punchedIn = !!openSession;
+  const totalHours = sessions.reduce((sum, s) => sum + (s.workingHours || 0), 0)
+    + (openSession ? (now - new Date(openSession.punchInTime)) / 3600000 : 0);
 
   /* ---------- location prefetch (single-flight) ---------- */
   const prefetchLocation = useCallback(() => {
@@ -125,17 +110,13 @@ export default function PunchScreen({ navigation }) {
     return p;
   }, [locPermission?.granted]);
 
-  const punchedIn = !!(session && !session.punchOutTime);
-  const done = !!(session && session.punchOutTime);
-  const liveHours = punchedIn ? (now - new Date(session.punchInTime)) / 3600000 : null;
-
   useEffect(() => {
-    if (locPermission?.granted && !done) {
+    if (locPermission?.granted) {
       prefetchLocation();
       const t = setInterval(prefetchLocation, 60 * 1000);
       return () => clearInterval(t);
     }
-  }, [locPermission?.granted, done, prefetchLocation]);
+  }, [locPermission?.granted, prefetchLocation]);
 
   /* ---------- capture (silent shutter) ---------- */
   const capture = async () => {
@@ -179,19 +160,24 @@ export default function PunchScreen({ navigation }) {
       }
       if (!pf.coords) {
         setPendingPhoto(null);
-        setLocModal(true); // premium popup — NO LOCATION = NO PUNCH
+        setLocModal(true); // NO LOCATION = NO PUNCH
         return;
       }
       coords = pf.coords; address = pf.address;
 
+      const wasPunchIn = !punchedIn;
       const path = punchedIn ? '/attendance/punch-out' : '/attendance/punch-in';
-      const s = await api(path, {
+      await api(path, {
         method: 'POST',
-        body: JSON.stringify({ ...coords, address, photoBase64: pendingPhoto.base64 }),
+        body: JSON.stringify({
+          ...coords, address,
+          siteName: siteName.trim() || 'SESS',
+          photoBase64: pendingPhoto.base64,
+        }),
       });
-      setSession(s);
-      if (!s.punchOutTime) startTracking(); else stopTracking();
+      await load();
       setPendingPhoto(null);
+      if (wasPunchIn) setSiteName('SESS'); // next punch-ku default reset
       prefetchLocation();
     } catch (e) {
       Alert.alert('Punch failed', e.message);
@@ -200,23 +186,23 @@ export default function PunchScreen({ navigation }) {
     } finally { setBusy(false); }
   };
 
-  const inAddr = session?.punchInAddress
-    || (session?.punchInLat ? `${session.punchInLat.toFixed(4)}, ${session.punchInLng.toFixed(4)}` : null);
-  const outAddr = session?.punchOutAddress
-    || (session?.punchOutLat ? `${session.punchOutLat.toFixed(4)}, ${session.punchOutLng.toFixed(4)}` : null);
-
-  const detail = detailModal === 'in' ? {
-    label: 'Punch In', color: GREEN, icon: 'login',
-    photo: session?.punchInPhoto ? `${BASE}/${session.punchInPhoto}` : null,
-    time: fmtTime(session?.punchInTime),
-    dateStr: session?.punchInTime ? new Date(session.punchInTime).toDateString() : '',
-    address: inAddr, acc: session?.punchInAcc, late: session?.isLate,
-  } : detailModal === 'out' ? {
-    label: 'Punch Out', color: RED, icon: 'logout',
-    photo: session?.punchOutPhoto ? `${BASE}/${session.punchOutPhoto}` : null,
-    time: fmtTime(session?.punchOutTime),
-    dateStr: session?.punchOutTime ? new Date(session.punchOutTime).toDateString() : '',
-    address: outAddr, acc: session?.punchOutAcc, late: false,
+  /* ---------- detail popup data ---------- */
+  const detailIdx = detailModal ? sessions.findIndex(s => s.id === detailModal.id) : -1;
+  const detail = detailModal ? {
+    label: sessionLabel(detailModal, Math.max(detailIdx, 0)),
+    color: detailModal.punchOutTime ? INDIGO : GREEN,
+    inPhoto: detailModal.punchInPhoto ? `${BASE}/${detailModal.punchInPhoto}` : null,
+    outPhoto: detailModal.punchOutPhoto ? `${BASE}/${detailModal.punchOutPhoto}` : null,
+    inTime: fmtTime(detailModal.punchInTime),
+    outTime: fmtTime(detailModal.punchOutTime),
+    dateStr: new Date(detailModal.punchInTime).toDateString(),
+    inAddr: detailModal.punchInAddress
+      || (detailModal.punchInLat ? `${detailModal.punchInLat.toFixed(4)}, ${detailModal.punchInLng.toFixed(4)}` : null),
+    outAddr: detailModal.punchOutAddress
+      || (detailModal.punchOutLat ? `${detailModal.punchOutLat.toFixed(4)}, ${detailModal.punchOutLng.toFixed(4)}` : null),
+    inAcc: detailModal.punchInAcc, outAcc: detailModal.punchOutAcc,
+    late: detailModal.isLate,
+    dur: detailModal.punchOutTime ? fmtDuration(detailModal.workingHours) : 'In progress',
   } : null;
 
   return (
@@ -248,15 +234,7 @@ export default function PunchScreen({ navigation }) {
       </LinearGradient>
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        {loading ? <ActivityIndicator size="large" color={INDIGO} style={{ marginTop: 40 }} /> : done ? (
-          <View style={styles.doneWrap}>
-            <View style={styles.doneCircle}>
-              <MaterialIcons name="task-alt" size={54} color="#fff" />
-            </View>
-            <Text style={styles.doneTitle}>Day Completed</Text>
-            <Text style={styles.doneSub}>{fmtDuration(session.workingHours)} worked today</Text>
-          </View>
-        ) : (!permission?.granted || !locPermission?.granted) ? (
+        {loading ? <ActivityIndicator size="large" color={INDIGO} style={{ marginTop: 40 }} /> : (!permission?.granted || !locPermission?.granted) ? (
           <View style={styles.permCard}>
             <View style={styles.permIcon}>
               <MaterialIcons name="verified-user" size={30} color={INDIGO} />
@@ -315,7 +293,11 @@ export default function PunchScreen({ navigation }) {
             <View style={styles.hoursPill}>
               <MaterialIcons name="timer" size={15} color={INDIGO} />
               <Text style={styles.hoursText}>
-                {done ? `${fmtDuration(session.workingHours)} worked` : punchedIn ? `${fmtDuration(liveHours)} (live)` : 'Day not started'}
+                {punchedIn
+                  ? `${fmtDuration(totalHours)} today (live)`
+                  : sessions.length
+                    ? `${fmtDuration(totalHours)} today • ${sessions.length} session${sessions.length > 1 ? 's' : ''}`
+                    : 'Day not started'}
               </Text>
             </View>
 
@@ -323,32 +305,56 @@ export default function PunchScreen({ navigation }) {
               <View style={styles.trackChip}>
                 <View style={styles.trackDot} />
                 <Text style={styles.trackText}>
-                  Live tracking {pending > 0 ? ` • ${pending} pending ⏳` : ''}
+                  Live tracking • every {TRACK_INTERVAL_MIN} min{pending > 0 ? ` • ${pending} pending ⏳` : ''}
                 </Text>
               </View>
             )}
 
-            <View style={styles.widgetRow}>
-              <PunchCard
-                label="PUNCH IN" color={GREEN} active={!!session}
-                photo={session?.punchInPhoto ? `${BASE}/${session.punchInPhoto}` : null}
-                time={fmtTime(session?.punchInTime)}
-                address={inAddr} late={session?.isLate}
-                onPress={() => setDetailModal('in')}
-              />
-              <PunchCard
-                label="PUNCH OUT" color={RED} active={done}
-                photo={session?.punchOutPhoto ? `${BASE}/${session.punchOutPhoto}` : null}
-                time={fmtTime(session?.punchOutTime)}
-                address={outAddr}
-                onPress={() => setDetailModal('out')}
-              />
-            </View>
+            {/* ===== Session timeline + travel gaps ===== */}
+            {sessions.length > 0 && (
+              <View style={{ width: '100%', marginTop: 16, gap: 10 }}>
+                {sessions.map((s, i) => (
+                  <React.Fragment key={s.id}>
+                    {i > 0 && sessions[i - 1].punchOutTime && (
+                      <View style={styles.travelRow}>
+                        <MaterialIcons name="directions-car" size={14} color={AMBER} />
+                        <Text style={styles.travelText}>
+                          Travel: {fmtDuration((new Date(s.punchInTime) - new Date(sessions[i - 1].punchOutTime)) / 3600000)}
+                        </Text>
+                      </View>
+                    )}
+                    <TouchableOpacity style={styles.sessCard} activeOpacity={0.85} onPress={() => setDetailModal(s)}>
+                      <View style={[styles.sessBar, { backgroundColor: s.punchOutTime ? '#9CA3AF' : GREEN }]} />
+                      <View style={styles.sessHead}>
+                        <Text style={styles.sessLabel}>{sessionLabel(s, i)}</Text>
+                        {s.isLate && <View style={styles.lateBadge}><Text style={styles.lateText}>LATE</Text></View>}
+                        {!s.punchOutTime && <View style={styles.openPill}><Text style={styles.openPillText}>ACTIVE</Text></View>}
+                        <MaterialIcons name="open-in-full" size={12} color="#C4C4C4" />
+                      </View>
+                      <View style={styles.sessTimeRow}>
+                        <Text style={styles.sessTime}>{fmtTime(s.punchInTime)}</Text>
+                        <MaterialIcons name="arrow-forward" size={13} color="#9CA3AF" />
+                        <Text style={styles.sessTime}>{fmtTime(s.punchOutTime)}</Text>
+                        <Text style={styles.sessDur}>
+                          {s.punchOutTime
+                            ? fmtDuration(s.workingHours)
+                            : fmtDuration((now - new Date(s.punchInTime)) / 3600000) + ' •live'}
+                        </Text>
+                      </View>
+                      <View style={styles.pAddrRow}>
+                        <MaterialIcons name="location-on" size={13} color="#6B7280" />
+                        <Text style={styles.pAddr} numberOfLines={1}>{s.punchInAddress || 'No address'}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </React.Fragment>
+                ))}
+              </View>
+            )}
           </>
         )}
       </ScrollView>
 
-      {/* ===== POPUP 1: Confirm (premium) ===== */}
+      {/* ===== POPUP 1: Confirm ===== */}
       <Modal visible={!!pendingPhoto} transparent animationType="fade">
         <View style={styles.overlay}>
           <View style={styles.mCard}>
@@ -359,6 +365,25 @@ export default function PunchScreen({ navigation }) {
             {pendingPhoto && (
               <View style={styles.previewFrame}>
                 <Image source={{ uri: pendingPhoto.uri }} style={styles.preview} />
+              </View>
+            )}
+
+            {!punchedIn && (
+              <View style={styles.siteField}>
+                <MaterialIcons name="business" size={16} color={INDIGO} />
+                <TextInput
+                  style={styles.siteInput}
+                  value={siteName}
+                  onChangeText={setSiteName}
+                  placeholder="Company / Site name"
+                  placeholderTextColor="#9CA3AF"
+                  maxLength={60}
+                />
+                {siteName !== 'SESS' && (
+                  <TouchableOpacity onPress={() => setSiteName('SESS')}>
+                    <MaterialIcons name="restart-alt" size={17} color="#9CA3AF" />
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
@@ -402,7 +427,7 @@ export default function PunchScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* ===== POPUP 2: Location required (premium) ===== */}
+      {/* ===== POPUP 2: Location required ===== */}
       <Modal visible={locModal} transparent animationType="fade">
         <View style={styles.overlay}>
           <View style={styles.mCard}>
@@ -429,43 +454,60 @@ export default function PunchScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* ===== POPUP 3: Widget detail (NEW) ===== */}
+      {/* ===== POPUP 3: Session detail ===== */}
       <Modal visible={!!detail} transparent animationType="slide">
         <View style={styles.overlay}>
           {detail && (
             <View style={styles.mCard}>
               <View style={[styles.mHeadStrip, { backgroundColor: detail.color }]} />
               <View style={styles.dHead}>
-                <View style={[styles.dIconWrap, { backgroundColor: detail.color + '15' }]}>
-                  <MaterialIcons name={detail.icon} size={20} color={detail.color} />
+                <View style={[styles.dIconWrap, { backgroundColor: '#EEF2FF' }]}>
+                  <MaterialIcons name="work" size={20} color={INDIGO} />
                 </View>
-                <Text style={styles.mTitle}>{detail.label} Details</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mTitle}>{detail.label}</Text>
+                  <Text style={styles.mSub}>{detail.dateStr} • {detail.dur}{detail.late ? ' • Late' : ''}</Text>
+                </View>
                 <TouchableOpacity style={styles.dClose} onPress={() => setDetailModal(null)}>
                   <MaterialIcons name="close" size={20} color="#6B7280" />
                 </TouchableOpacity>
               </View>
 
-              {detail.photo ? (
-                <Image source={{ uri: detail.photo }} style={styles.dPhoto} />
-              ) : (
-                <View style={[styles.dPhoto, styles.pPhotoEmpty]}>
-                  <MaterialIcons name="no-photography" size={30} color="#C4C4C4" />
+              <View style={styles.photoPair}>
+                <View style={styles.photoCol}>
+                  <Text style={[styles.photoLabel, { color: GREEN }]}>IN • {detail.inTime}</Text>
+                  {detail.inPhoto ? (
+                    <Image source={{ uri: detail.inPhoto }} style={styles.photoBig} />
+                  ) : (
+                    <View style={[styles.photoBig, styles.photoEmpty]}>
+                      <MaterialIcons name="no-photography" size={24} color="#C4C4C4" />
+                    </View>
+                  )}
                 </View>
-              )}
+                <View style={styles.photoCol}>
+                  <Text style={[styles.photoLabel, { color: RED }]}>OUT • {detail.outTime}</Text>
+                  {detail.outPhoto ? (
+                    <Image source={{ uri: detail.outPhoto }} style={styles.photoBig} />
+                  ) : (
+                    <View style={[styles.photoBig, styles.photoEmpty]}>
+                      <MaterialIcons name="schedule" size={24} color="#C4C4C4" />
+                    </View>
+                  )}
+                </View>
+              </View>
 
               <View style={styles.dRow}>
-                <MaterialIcons name="schedule" size={17} color={INDIGO} />
-                <Text style={styles.dRowText}>{detail.time} • {detail.dateStr}</Text>
-                {detail.late ? <View style={styles.lateBadge}><Text style={styles.lateText}>LATE</Text></View> : null}
+                <MaterialIcons name="location-on" size={16} color={GREEN} />
+                <Text style={styles.dRowText}>
+                  {detail.inAddr || 'No address'}{detail.inAcc != null ? `  (±${Math.round(detail.inAcc)}m)` : ''}
+                </Text>
               </View>
-              <View style={styles.dRow}>
-                <MaterialIcons name="location-on" size={17} color={GREEN} />
-                <Text style={styles.dRowText}>{detail.address || 'No address captured'}</Text>
-              </View>
-              {detail.acc != null && (
+              {detail.outTime !== '--:--' && (
                 <View style={styles.dRow}>
-                  <MaterialIcons name="gps-fixed" size={17} color="#6B7280" />
-                  <Text style={styles.dRowText}>Accuracy: ±{Math.round(detail.acc)} meters</Text>
+                  <MaterialIcons name="location-on" size={16} color={RED} />
+                  <Text style={styles.dRowText}>
+                    {detail.outAddr || 'No address'}{detail.outAcc != null ? `  (±${Math.round(detail.outAcc)}m)` : ''}
+                  </Text>
                 </View>
               )}
             </View>
@@ -504,11 +546,6 @@ const styles = StyleSheet.create({
   punchGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: 27 },
   punchText: { color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: 0.4 },
 
-  doneWrap: { alignItems: 'center', marginTop: 6 },
-  doneCircle: { width: 120, height: 120, borderRadius: 60, backgroundColor: '#9CA3AF', justifyContent: 'center', alignItems: 'center', elevation: 3 },
-  doneTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginTop: 12 },
-  doneSub: { fontSize: 13, color: '#6B7280', marginTop: 2 },
-
   permCard: { width: '100%', backgroundColor: '#fff', borderRadius: 20, padding: 22, alignItems: 'center', elevation: 2 },
   permIcon: { width: 58, height: 58, borderRadius: 29, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
   permTitle: { fontSize: 16, fontWeight: '800', color: '#111827', marginTop: 10 },
@@ -522,16 +559,17 @@ const styles = StyleSheet.create({
   trackDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: GREEN },
   trackText: { color: '#166534', fontSize: 12, fontWeight: '600' },
 
-  widgetRow: { flexDirection: 'row', gap: 12, marginTop: 16, width: '100%' },
-  pCard: { flex: 1, backgroundColor: '#fff', borderRadius: 18, padding: 12, elevation: 2, overflow: 'hidden', shadowColor: '#1E3A8A', shadowOpacity: 0.07, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
-  pCardEmpty: { opacity: 0.85 },
-  pBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
-  pHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-  pLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-  pPhoto: { width: '100%', height: 108, borderRadius: 12, marginTop: 8, backgroundColor: '#E5E7EB' },
-  pPhotoEmpty: { justifyContent: 'center', alignItems: 'center' },
-  pTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  pTime: { fontSize: 18, fontWeight: '800', color: '#111827' },
+  travelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center', backgroundColor: '#FEF3C7', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5 },
+  travelText: { color: AMBER, fontSize: 11.5, fontWeight: '800' },
+  sessCard: { backgroundColor: '#fff', borderRadius: 16, padding: 12, elevation: 1, overflow: 'hidden', shadowColor: '#1E3A8A', shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } },
+  sessBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
+  sessHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 },
+  sessLabel: { fontSize: 12.5, fontWeight: '900', color: '#111827', flex: 1 },
+  openPill: { backgroundColor: '#ECFDF5', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+  openPillText: { color: GREEN, fontSize: 9, fontWeight: '800' },
+  sessTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
+  sessTime: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  sessDur: { marginLeft: 'auto', color: INDIGO, fontSize: 11.5, fontWeight: '800', backgroundColor: '#EEF2FF', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3 },
   lateBadge: { backgroundColor: '#FEE2E2', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   lateText: { color: RED, fontSize: 9, fontWeight: '800' },
   pAddrRow: { flexDirection: 'row', gap: 4, marginTop: 6, alignItems: 'flex-start' },
@@ -544,6 +582,8 @@ const styles = StyleSheet.create({
   mSub: { fontSize: 12.5, color: '#6B7280', marginTop: 3 },
   previewFrame: { padding: 4, borderRadius: 20, backgroundColor: '#F3F4F6', marginTop: 14 },
   preview: { width: 190, height: 190, borderRadius: 16, backgroundColor: '#E5E7EB' },
+  siteField: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%', backgroundColor: '#F9FAFB', borderWidth: 1.5, borderColor: '#E0E7FF', borderRadius: 12, paddingHorizontal: 12, height: 48, marginTop: 14 },
+  siteInput: { flex: 1, fontSize: 14, fontWeight: '700', color: '#111827' },
   mChipCol: { width: '100%', gap: 8, marginTop: 14 },
   mChip: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', paddingHorizontal: 11, paddingVertical: 9 },
   mChipText: { flex: 1, fontSize: 12, color: '#374151', fontWeight: '600', lineHeight: 16 },
@@ -558,7 +598,11 @@ const styles = StyleSheet.create({
   dHead: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%', marginTop: 4 },
   dIconWrap: { width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   dClose: { marginLeft: 'auto', width: 34, height: 34, borderRadius: 17, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' },
-  dPhoto: { width: '100%', height: 240, borderRadius: 16, marginTop: 14, backgroundColor: '#E5E7EB' },
+  photoPair: { flexDirection: 'row', gap: 10, marginTop: 14, width: '100%' },
+  photoCol: { flex: 1 },
+  photoLabel: { fontSize: 10.5, fontWeight: '800', marginBottom: 6 },
+  photoBig: { width: '100%', height: 150, borderRadius: 14, backgroundColor: '#E5E7EB' },
+  photoEmpty: { justifyContent: 'center', alignItems: 'center' },
   dRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, width: '100%', marginTop: 12, paddingHorizontal: 4 },
   dRowText: { flex: 1, fontSize: 13, color: '#374151', fontWeight: '600', lineHeight: 18 },
 });

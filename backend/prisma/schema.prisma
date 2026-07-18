@@ -58,6 +58,7 @@ model AttendanceSession {
   punchOutPhoto String? @map("punch_out_photo")
   punchInAddress  String? @map("punch_in_address")
   punchOutAddress String? @map("punch_out_address")
+  siteName String? @map("site_name") @default("SESS")
 
   @@index([userId, punchInTime])
   @@map("attendance_session")

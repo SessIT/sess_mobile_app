@@ -28,7 +28,7 @@ export default function DashboardScreen({ route, navigation }) {
   const tiles = [
     isAdmin && { key: 'users', label: 'User Management', sub: 'Create & manage accounts', icon: 'group', screen: 'Users' },
     { key: 'punch', label: 'Punch In / Out', sub: 'Selfie + GPS attendance', icon: 'fingerprint', screen: 'Punch' },
-    { key: 'myatt', label: 'My Attendance', sub: 'History & working hours', icon: 'event-available' },
+    { key: 'myatt', label: 'My Attendance', sub: 'History & working hours', icon: 'event-available', screen: 'MyAttendance' },
     isAdmin && { key: 'trail', label: 'Team Trail', sub: 'Employee location timeline', icon: 'map', screen: 'TeamTrail' },
   ].filter(Boolean);
 
