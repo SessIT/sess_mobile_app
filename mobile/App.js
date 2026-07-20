@@ -10,6 +10,7 @@ import CreateUserScreen from './screens/CreateUserScreen';
 import PunchScreen from './screens/PunchScreen';
 import TeamTrailScreen from './screens/TeamTrailScreen';
 import MyAttendanceScreen from './screens/MyAttendanceScreen';
+import TeamAttendanceScreen from './screens/TeamAttendanceScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -55,6 +56,7 @@ export default function App() {
         <Stack.Screen name="Punch" component={PunchScreen} />
         <Stack.Screen name="TeamTrail" component={TeamTrailScreen} />
         <Stack.Screen name="MyAttendance" component={MyAttendanceScreen} />
+        <Stack.Screen name="TeamAttendance" component={TeamAttendanceScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

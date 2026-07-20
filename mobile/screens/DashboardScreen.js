@@ -30,6 +30,7 @@ export default function DashboardScreen({ route, navigation }) {
     { key: 'punch', label: 'Punch In / Out', sub: 'Selfie + GPS attendance', icon: 'fingerprint', screen: 'Punch' },
     { key: 'myatt', label: 'My Attendance', sub: 'History & working hours', icon: 'event-available', screen: 'MyAttendance' },
     isAdmin && { key: 'trail', label: 'Team Trail', sub: 'Employee location timeline', icon: 'map', screen: 'TeamTrail' },
+    isAdmin && { key: 'teamatt', label: 'Team Attendance', sub: 'All employees • month reports', icon: 'groups', screen: 'TeamAttendance' },
   ].filter(Boolean);
 
   return (
