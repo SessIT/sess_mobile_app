@@ -33,6 +33,9 @@ const STATUS = {
   weekoff: { label: 'Week Off', color: GREY, bg: '#F3F4F6' },
   future: { label: '—', color: '#D1D5DB', bg: '#FAFAFA' },
 };
+// True late (>= 09:41) shows amber; on-time and grace arrivals stay green (present).
+const LATE_VIS = { label: 'Late', color: AMBER, bg: '#FEF3C7' };
+const dayVis = (d) => (d.status === 'present' && d.lateLevel === 'late' ? LATE_VIS : STATUS[d.status]);
 
 export default function TeamAttendanceScreen({ navigation }) {
   const [mode, setMode] = useState('day'); // 'day' | 'month'
@@ -273,7 +276,7 @@ export default function TeamAttendanceScreen({ navigation }) {
               </View>
 
               {data.days.map(d => {
-                const st = STATUS[d.status];
+                const st = dayVis(d);
                 return (
                   <View key={d.date} style={[styles.dayRow, d.status === 'future' && { opacity: 0.45 }]}>
                     <View style={[styles.dayBlock, { backgroundColor: st.bg }]}>

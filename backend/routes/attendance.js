@@ -24,9 +24,31 @@ function todayWindowIST() {
   const y = istNow.getUTCFullYear(), m = istNow.getUTCMonth(), d = istNow.getUTCDate();
   const start = new Date(Date.UTC(y, m, d, -5, -30));
   const end = new Date(start.getTime() + 24 * 3600 * 1000);
-  const lateCutoff = new Date(Date.UTC(y, m, d, 3, 45));
+  // On-time cutoff 09:30 IST = 04:00 UTC. After this the first punch is flagged late.
+  const lateCutoff = new Date(Date.UTC(y, m, d, 4, 0));
   return { start, end, lateCutoff };
 }
+
+/* Arrival policy (IST, based on the FIRST punch-in of the day):
+ *   <= 09:30            -> 'ontime' (present, green, no tag)
+ *   09:31 .. 09:40      -> 'grace'  (present, green, LATE tag) — 10 min grace
+ *   >= 09:41            -> 'late'   (late, amber, LATE tag)
+ * lateLevelOf() derives this from a stored punchInTime, so it stays correct
+ * for historical rows without a DB migration. */
+const ON_TIME_MIN = 9 * 60 + 40;   // 09:30
+const GRACE_END_MIN = 9 * 60 + 40; // 09:40
+const istMinutesOfDay = (d) => {
+  const ist = new Date(new Date(d).getTime() + 5.5 * 3600 * 1000);
+  return ist.getUTCHours() * 60 + ist.getUTCMinutes();
+};
+const lateLevelOf = (firstIn) => {
+  if (!firstIn) return null;
+  const mins = istMinutesOfDay(firstIn);
+  if (mins <= ON_TIME_MIN) return 'ontime';
+  if (mins <= GRACE_END_MIN) return 'grace';
+  return 'late';
+};
+const isLateLevel = (lvl) => lvl === 'grace' || lvl === 'late';
 
 const num = (v) => (v !== undefined && v !== null && v !== '' ? parseFloat(v) : null);
 
@@ -144,11 +166,13 @@ router.get('/admin/day', requireRole(ADMIN), async (req, res) => {
       u.sessions += 1;
       if (s.punchOutTime) { u.lastOut = s.punchOutTime; u.hours += s.workingHours || 0; }
       else u.open = true;
-      if (s.isLate) u.late = true;
       const site = (s.siteName || 'SESS').trim();
       if (!u.sites.includes(site)) u.sites.push(site);
     }
-    const present = Object.values(byUser).map(u => ({ ...u, hours: Math.round(u.hours * 100) / 100 }));
+    const present = Object.values(byUser).map(u => {
+      const lateLevel = lateLevelOf(u.firstIn);
+      return { ...u, hours: Math.round(u.hours * 100) / 100, lateLevel, late: isLateLevel(lateLevel) };
+    });
     const ids = new Set(present.map(p => p.userId));
     const absent = allUsers.filter(u => !ids.has(u.id));
     res.json({ date: dateStr, present, absent, totalUsers: allUsers.length });
@@ -189,8 +213,12 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       for (const u of users) map[u.id] = { userId: u.id, username: u.username, fullName: u.fullName, days: new Set(), late: 0, hours: 0 };
       for (const s of sessions) {
         const r = map[s.userId]; if (!r) continue;
-        r.days.add(ymdIST(s.punchInTime));
-        if (s.isLate) r.late++;
+        const ymd = ymdIST(s.punchInTime);
+        // Sessions are asc, so the first one seen for a day is the day's first punch.
+        if (!r.days.has(ymd)) {
+          r.days.add(ymd);
+          if (isLateLevel(lateLevelOf(s.punchInTime))) r.late++;
+        }
         r.hours += s.workingHours || 0;
       }
       const summary = Object.values(map).map(r => ({
@@ -206,10 +234,9 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
     const byDay = {};
     for (const s of sessions) {
       const ymd = ymdIST(s.punchInTime);
-      const d = byDay[ymd] || (byDay[ymd] = { sessions: 0, firstIn: s.punchInTime, lastOut: null, hours: 0, late: false, sites: [] });
+      const d = byDay[ymd] || (byDay[ymd] = { sessions: 0, firstIn: s.punchInTime, lastOut: null, hours: 0, sites: [] });
       d.sessions++;
       if (s.punchOutTime) { d.lastOut = s.punchOutTime; d.hours += s.workingHours || 0; }
-      if (s.isLate) d.late = true;
       const site = (s.siteName || 'SESS').trim();
       if (!d.sites.includes(site)) d.sites.push(site);
     }
@@ -217,12 +244,13 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       const rec = byDay[dm.ymd];
       const status = dm.isFuture ? (dm.isWeekoff ? 'weekoff' : 'future')
         : rec ? 'present' : dm.isWeekoff ? 'weekoff' : 'absent';
+      const lateLevel = rec ? lateLevelOf(rec.firstIn) : null;
       return {
         date: dm.ymd, weekday: dm.weekday, status,
         sessions: rec?.sessions || 0,
         firstIn: rec?.firstIn || null, lastOut: rec?.lastOut || null,
         hours: rec ? Math.round(rec.hours * 100) / 100 : 0,
-        late: rec?.late || false, sites: rec?.sites || [],
+        late: isLateLevel(lateLevel), lateLevel, sites: rec?.sites || [],
       };
     });
     const stats = {
@@ -274,10 +302,9 @@ router.get('/my-month', async (req, res) => {
     const byDay = {};
     for (const s of sessions) {
       const ymd = ymdIST(s.punchInTime);
-      const d = byDay[ymd] || (byDay[ymd] = { sessions: 0, firstIn: s.punchInTime, lastOut: null, hours: 0, late: false, sites: [] });
+      const d = byDay[ymd] || (byDay[ymd] = { sessions: 0, firstIn: s.punchInTime, lastOut: null, hours: 0, sites: [] });
       d.sessions++;
       if (s.punchOutTime) { d.lastOut = s.punchOutTime; d.hours += s.workingHours || 0; }
-      if (s.isLate) d.late = true;
       const site = (s.siteName || 'SESS').trim();
       if (!d.sites.includes(site)) d.sites.push(site);
     }
@@ -290,12 +317,13 @@ router.get('/my-month', async (req, res) => {
       const isFuture = ymd > todayStr;
       const rec = byDay[ymd];
       const status = isFuture ? 'future' : rec ? 'present' : isWeekoff ? 'weekoff' : 'absent';
+      const lateLevel = rec ? lateLevelOf(rec.firstIn) : null;
       days.push({
         date: ymd, weekday: wd, status,
         sessions: rec?.sessions || 0,
         firstIn: rec?.firstIn || null, lastOut: rec?.lastOut || null,
         hours: rec ? Math.round(rec.hours * 100) / 100 : 0,
-        late: rec?.late || false, sites: rec?.sites || [],
+        late: isLateLevel(lateLevel), lateLevel, sites: rec?.sites || [],
       });
     }
     const stats = {
