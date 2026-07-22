@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* Soft, faintly-tinted canvas so white cards feel elevated (not flat gray). */
+  background-color: #f6f8fb;
+  background-image:
+    radial-gradient(1200px 600px at 100% -10%, rgba(30, 58, 138, 0.05), transparent 60%),
+    radial-gradient(900px 500px at -10% 0%, rgba(79, 91, 213, 0.04), transparent 55%);
+  background-attachment: fixed;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+::selection {
+  background: rgba(30, 58, 138, 0.14);
+}
+
+/* Thin, unobtrusive scrollbars for the data-heavy tables */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 9999px;
+}
+
+/* Leaflet map must have an explicit height wherever it is used */
+.leaflet-container {
+  font: inherit;
+}

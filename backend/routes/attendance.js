@@ -223,7 +223,10 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       }
       const summary = Object.values(map).map(r => ({
         userId: r.userId, username: r.username, fullName: r.fullName,
-        present: r.days.size,
+        // Present = on-time days only. Late days are a separate, mutually-exclusive
+        // bucket so that present + late + absent === workingDaysSoFar.
+        // (r.days.size = every day attended; r.late = those that were late.)
+        present: Math.max(r.days.size - r.late, 0),
         absent: Math.max(workingDaysSoFar - r.days.size, 0),
         late: r.late,
         hours: Math.round(r.hours * 100) / 100,
@@ -254,7 +257,9 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       };
     });
     const stats = {
-      present: days.filter(d => d.status === 'present').length,
+      // Present excludes late days so present + late + absent === working days,
+      // matching the all-users summary and the mobile /my-month view.
+      present: days.filter(d => d.status === 'present' && !d.late).length,
       absent: days.filter(d => d.status === 'absent').length,
       late: days.filter(d => d.late).length,
       hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
