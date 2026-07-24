@@ -76,6 +76,15 @@ model OtpCode {
   @@map("otp_codes")
 }
 
+model Holiday {
+  id        Int      @id @default(autoincrement())
+  date      DateTime @unique @db.Date
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("holidays")
+}
+
 model LocationLog {
   id         Int      @id @default(autoincrement())
   userId     Int      @map("user_id")

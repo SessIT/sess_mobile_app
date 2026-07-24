@@ -77,7 +77,7 @@ function SiteBadges({ sites }) {
 
 /* ============================================================ Month: summary */
 
-function MonthSummaryTable({ rows, onPick }) {
+function MonthSummaryTable({ rows, onPick, requiredHours }) {
   if (!rows || rows.length === 0) {
     return <EmptyState title="No attendance yet" hint="No records for this month." icon={<IconCalendar />} />;
   }
@@ -88,28 +88,38 @@ function MonthSummaryTable({ rows, onPick }) {
           <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
             <th className="px-3 py-2 font-semibold">Name</th>
             <th className="px-3 py-2 text-center font-semibold">Present</th>
-            <th className="px-3 py-2 text-center font-semibold">Absent</th>
+            <th className="px-3 py-2 text-center font-semibold">Leave</th>
             <th className="px-3 py-2 text-center font-semibold">Late</th>
-            <th className="px-3 py-2 text-right font-semibold">Hours</th>
+            <th className="px-3 py-2 text-right font-semibold">Required</th>
+            <th className="px-3 py-2 text-right font-semibold">Worked</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr
-              key={r.userId}
-              onClick={() => onPick(r)}
-              className="cursor-pointer border-b border-slate-100 transition hover:bg-slate-50"
-            >
-              <td className="px-3 py-2.5">
-                <p className="font-semibold text-slate-800">{r.fullName || r.username}</p>
-                <p className="text-xs text-slate-400">@{r.username}</p>
-              </td>
-              <td className="px-3 py-2.5 text-center font-semibold text-emerald-600">{r.present}</td>
-              <td className="px-3 py-2.5 text-center font-semibold text-red-600">{r.absent}</td>
-              <td className="px-3 py-2.5 text-center font-semibold text-amber-600">{r.late}</td>
-              <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">{fmtHours(r.hours)}</td>
-            </tr>
-          ))}
+          {rows.map((r) => {
+            // Short of the target usually means leave/half-days — flag amber, not alarming red.
+            const short = requiredHours != null && r.hours < requiredHours;
+            return (
+              <tr
+                key={r.userId}
+                onClick={() => onPick(r)}
+                className="cursor-pointer border-b border-slate-100 transition hover:bg-slate-50"
+              >
+                <td className="px-3 py-2.5">
+                  <p className="font-semibold text-slate-800">{r.fullName || r.username}</p>
+                  <p className="text-xs text-slate-400">@{r.username}</p>
+                </td>
+                <td className="px-3 py-2.5 text-center font-semibold text-emerald-600">{r.present}</td>
+                <td className="px-3 py-2.5 text-center font-semibold text-red-600">{r.absent}</td>
+                <td className="px-3 py-2.5 text-center font-semibold text-amber-600">{r.late}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-slate-400">
+                  {requiredHours != null ? fmtHours(requiredHours) : '—'}
+                </td>
+                <td className={cx('px-3 py-2.5 text-right font-semibold tabular-nums', short ? 'text-amber-600' : 'text-emerald-600')}>
+                  {fmtHours(r.hours)}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -157,11 +167,12 @@ function MonthUserDetail({ month, user, onBack }) {
 
       {!loading && !error && stats && (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
             <StatCard label="Present" value={stats.present} tone="green" icon={<IconCheckCircle className="h-5 w-5" />} />
-            <StatCard label="Absent" value={stats.absent} tone="red" icon={<IconBan className="h-5 w-5" />} />
+            <StatCard label="Leave" value={stats.absent} tone="red" icon={<IconBan className="h-5 w-5" />} />
             <StatCard label="Late" value={stats.late} tone="amber" icon={<IconClock className="h-5 w-5" />} />
-            <StatCard label="Hours" value={fmtHours(stats.hours)} tone="blue" icon={<IconTimer className="h-5 w-5" />} />
+            <StatCard label="Required hrs" value={fmtHours(data.requiredHours)} sub={data.hoursPerDay ? `${data.hoursPerDay} h/day` : undefined} tone="slate" icon={<IconCalendar className="h-5 w-5" />} />
+            <StatCard label="Worked hrs" value={fmtHours(stats.hours)} tone="blue" icon={<IconTimer className="h-5 w-5" />} />
           </div>
 
           {days.length === 0 ? (
@@ -259,6 +270,10 @@ function MonthTab() {
         {data && (
           <p className="pb-2 text-sm text-slate-500">
             <span className="font-semibold text-slate-700">{data.workingDaysSoFar}</span> working days so far
+            {data.requiredHours != null && (
+              <> · <span className="font-semibold text-slate-700">{fmtHours(data.requiredHours)}</span> required
+                {data.hoursPerDay ? ` (${data.hoursPerDay} h/day)` : ''}</>
+            )}
             {typeof data.summary?.length === 'number' && (
               <> · {data.summary.length} employees</>
             )}
@@ -271,7 +286,7 @@ function MonthTab() {
           {loading && <Loading label="Loading month summary…" />}
           {!loading && error && <ErrorNote>{error}</ErrorNote>}
           {!loading && !error && !selected && (
-            <MonthSummaryTable rows={data?.summary} onPick={setSelected} />
+            <MonthSummaryTable rows={data?.summary} onPick={setSelected} requiredHours={data?.requiredHours} />
           )}
           {!loading && !error && selected && (
             <MonthUserDetail month={month} user={selected} onBack={() => setSelected(null)} />

@@ -6,6 +6,10 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
 const ADMIN = 'Technical Director / Admin';
 
+// Standard paid working day. Required hours for a period = working days × this.
+// Single source of truth so web + mobile show the same target.
+const HOURS_PER_DAY = 8;
+
 router.use(requireAuth);
 
 const dir = path.join(__dirname, '..', 'uploads', 'attendance');
@@ -231,7 +235,11 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
         late: r.late,
         hours: Math.round(r.hours * 100) / 100,
       })).sort((a, b) => (a.fullName || a.username).localeCompare(b.fullName || b.username));
-      return res.json({ month, workingDaysSoFar, summary });
+      return res.json({
+        month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,
+        requiredHours: workingDaysSoFar * HOURS_PER_DAY, // target for the period
+        summary,
+      });
     }
 
     const byDay = {};
@@ -264,7 +272,11 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       late: days.filter(d => d.late).length,
       hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
     };
-    res.json({ month, workingDaysSoFar, stats, days });
+    res.json({
+      month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,
+      requiredHours: workingDaysSoFar * HOURS_PER_DAY,
+      stats, days,
+    });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 

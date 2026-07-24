@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Users from './pages/Users';
 import TeamAttendance from './pages/TeamAttendance';
 import TeamTrail from './pages/TeamTrail';
+import Holidays from './pages/Holidays';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
               <Route path="/users" element={<Users />} />
               <Route path="/attendance" element={<TeamAttendance />} />
               <Route path="/trail" element={<TeamTrail />} />
+              <Route path="/holidays" element={<Holidays />} />
             </Route>
           </Route>
 

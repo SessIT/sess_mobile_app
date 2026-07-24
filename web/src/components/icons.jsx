@@ -152,6 +152,27 @@ export const IconPlus = (p) => (
   </Svg>
 );
 
+export const IconGift = (p) => (
+  <Svg {...p}>
+    <rect x="3" y="8" width="18" height="4" rx="1" />
+    <path d="M12 8v13M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7" />
+    <path d="M12 8S10.5 4 8 4a2 2 0 0 0 0 4h4zM12 8s1.5-4 4-4a2 2 0 0 1 0 4h-4z" />
+  </Svg>
+);
+
+export const IconUpload = (p) => (
+  <Svg {...p}>
+    <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+    <path d="M12 15V3M7 8l5-5 5 5" />
+  </Svg>
+);
+
+export const IconTrash = (p) => (
+  <Svg {...p}>
+    <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" />
+  </Svg>
+);
+
 export const IconRadio = (p) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="2" />

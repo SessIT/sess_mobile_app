@@ -1,6 +1,6 @@
 import { getAuth } from './auth';
 
-export const API_URL = 'http://192.168.68.104:4000/api';
+export const API_URL = 'http://192.168.68.108:4000/api';
 
 export async function api(path, options = {}) {
   const auth = await getAuth();

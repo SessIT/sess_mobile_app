@@ -1,12 +1,74 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { clearAuth } from '../lib/auth';
+import { api } from '../lib/api';
 
 const INDIGO = '#1E3A8A';
 const ADMIN = 'Technical Director / Admin';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
+
+/* Compact holiday widget — shows the next upcoming holiday and opens the full
+ * Holidays screen (upcoming-first) on tap. Fails silently so the dashboard is
+ * never blocked by this call. */
+function HolidayWidget({ navigation }) {
+  const [next, setNext] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api('/holidays/upcoming?limit=1');
+        if (alive) setNext(res.holidays?.[0] || null);
+      } catch {
+        if (alive) setNext(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const d = next ? new Date(next.date) : null;
+  const until = d ? Math.round((new Date(d.toISOString().slice(0, 10) + 'T00:00:00Z') - new Date(todayYMD() + 'T00:00:00Z')) / 86400000) : null;
+  const away = until === 0 ? 'Today' : until === 1 ? 'Tomorrow' : `in ${until} days`;
+
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={() => navigation.navigate('Holidays')}>
+      <LinearGradient
+        colors={['#4F46E5', '#4338CA']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.widget}
+      >
+        <View style={styles.widgetIcon}>
+          <MaterialIcons name="celebration" size={24} color="#fff" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.widgetLabel}>NEXT HOLIDAY</Text>
+          {loading ? (
+            <Text style={styles.widgetName}>Loading…</Text>
+          ) : next ? (
+            <>
+              <Text style={styles.widgetName} numberOfLines={1}>{next.name}</Text>
+              <Text style={styles.widgetSub}>
+                {d.getUTCDate()} {MONTHS[d.getUTCMonth()]} {d.getUTCFullYear()} · {away}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.widgetName}>No upcoming holidays</Text>
+          )}
+        </View>
+        <MaterialIcons name="chevron-right" size={26} color="rgba(255,255,255,0.85)" />
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
 
 const getGreeting = () => {
   const h = new Date().getHours();
@@ -80,6 +142,8 @@ export default function DashboardScreen({ route, navigation }) {
 
       {/* ===== Tiles ===== */}
       <ScrollView contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
+        <HolidayWidget navigation={navigation} />
+
         <Text style={styles.sectionTitle}>Quick Actions</Text>
         <View style={styles.tileWrap}>
           {tiles.map(t => (
@@ -154,6 +218,20 @@ const styles = StyleSheet.create({
   avatarText: { color: '#fff', fontSize: 19, fontWeight: '800' },
 
   grid: { padding: 20, paddingBottom: 10 },
+
+  widget: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    borderRadius: 18, padding: 16, marginBottom: 20,
+    elevation: 3, shadowColor: '#312E81', shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 5 },
+  },
+  widgetIcon: {
+    width: 46, height: 46, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.18)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  widgetLabel: { color: '#C7D2FE', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
+  widgetName: { color: '#fff', fontSize: 16, fontWeight: '800', marginTop: 3 },
+  widgetSub: { color: '#E0E7FF', fontSize: 12, fontWeight: '600', marginTop: 2 },
+
   sectionTitle: { fontSize: 15, fontWeight: '700', color: '#374151', marginBottom: 12 },
   tileWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   tile: {

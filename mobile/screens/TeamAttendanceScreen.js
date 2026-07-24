@@ -104,15 +104,18 @@ export default function TeamAttendanceScreen({ navigation }) {
       } else if (!selected) {
         fname = `attendance_${month}_all.csv`;
         lines = [
-          `Month:,${monthLabel(month)}`, `Working days (so far):,${data.workingDaysSoFar}`, '',
-          'Name,Username,Present,Absent,Late,Total Hours',
-          ...data.summary.map(r => [esc(r.fullName || r.username), r.username, r.present, r.absent, r.late, r.hours].join(',')),
+          `Month:,${monthLabel(month)}`,
+          `Working days (so far):,${data.workingDaysSoFar}`,
+          `Required hours:,${data.requiredHours} (${data.hoursPerDay || 8}h/day)`, '',
+          'Name,Username,Present,Leave,Late,Required Hours,Worked Hours',
+          ...data.summary.map(r => [esc(r.fullName || r.username), r.username, r.present, r.absent, r.late, data.requiredHours, r.hours].join(',')),
         ];
       } else {
         fname = `attendance_${month}_${selected.username}.csv`;
         lines = [
           `Employee:,${esc(selected.fullName || selected.username)}`, `Month:,${monthLabel(month)}`,
-          `Present:,${data.stats.present},Absent:,${data.stats.absent},Late:,${data.stats.late},Hours:,${data.stats.hours}`, '',
+          `Present:,${data.stats.present},Leave:,${data.stats.absent},Late:,${data.stats.late}`,
+          `Required Hours:,${data.requiredHours},Worked Hours:,${data.stats.hours}`, '',
           'Date,Weekday,Status,First In,Last Out,Sessions,Hours,Late,Sites',
           ...data.days.map(d => [d.date, WD[d.weekday], STATUS[d.status].label,
             fmtT(d.firstIn), fmtT(d.lastOut), d.sessions, d.hours, d.late ? 'LATE' : '', esc(d.sites.join(' | '))].join(',')),
@@ -242,7 +245,10 @@ export default function TeamAttendanceScreen({ navigation }) {
           {/* ===== MONTH VIEW — ALL ===== */}
           {mode === 'month' && data?.summary && !selected && (
             <>
-              <Text style={styles.wdText}>Working days so far: {data.workingDaysSoFar} (Sundays = week off)</Text>
+              <Text style={styles.wdText}>
+                Working days so far: {data.workingDaysSoFar} · Required: {fmtH(data.requiredHours)}
+                {data.hoursPerDay ? ` (${data.hoursPerDay}h/day)` : ''}
+              </Text>
               {data.summary.map(r => (
                 <TouchableOpacity key={r.userId} style={styles.card} activeOpacity={0.85}
                   onPress={() => setSelected(users.find(u => u.id === r.userId) || { id: r.userId, username: r.username, fullName: r.fullName })}>
@@ -251,9 +257,12 @@ export default function TeamAttendanceScreen({ navigation }) {
                     <Text style={styles.name}>{r.fullName || r.username}</Text>
                     <View style={styles.gridRow}>
                       <Text style={[styles.gridStat, { color: GREEN }]}>P: {r.present}</Text>
-                      <Text style={[styles.gridStat, { color: RED }]}>A: {r.absent}</Text>
+                      <Text style={[styles.gridStat, { color: RED }]}>Lv: {r.absent}</Text>
                       <Text style={[styles.gridStat, { color: AMBER }]}>L: {r.late}</Text>
-                      <Text style={[styles.gridStat, { color: INDIGO }]}>{fmtH(r.hours)}</Text>
+                      {/* Worked hours vs the period target: amber if short (usually leave), green if met. */}
+                      <Text style={[styles.gridStat, { color: r.hours < (data.requiredHours || 0) ? AMBER : GREEN }]}>
+                        {fmtH(r.hours)}
+                      </Text>
                     </View>
                   </View>
                   <MaterialIcons name="chevron-right" size={22} color="#C4C4C4" />
@@ -266,14 +275,42 @@ export default function TeamAttendanceScreen({ navigation }) {
           {mode === 'month' && data?.days && selected && (
             <>
               <View style={styles.statCard}>
-                {[['Present', data.stats.present, GREEN], ['Absent', data.stats.absent, RED],
-                  ['Late', data.stats.late, AMBER], ['Hours', fmtH(data.stats.hours), INDIGO]].map(([l, v, c]) => (
+                {[['Present', data.stats.present, GREEN], ['Leave', data.stats.absent, RED],
+                  ['Late', data.stats.late, AMBER], ['Worked', fmtH(data.stats.hours), INDIGO]].map(([l, v, c]) => (
                   <View key={l} style={styles.statBox}>
                     <Text style={[styles.statNum, { color: c }]}>{v}</Text>
                     <Text style={styles.statLabel}>{l}</Text>
                   </View>
                 ))}
               </View>
+
+              {/* Required vs worked hours for the period */}
+              {(() => {
+                const req = data.requiredHours || 0;
+                const worked = data.stats.hours || 0;
+                const pct = req > 0 ? Math.min(100, Math.round((worked / req) * 100)) : 0;
+                const met = worked >= req;
+                return (
+                  <View style={styles.hoursCard}>
+                    <View style={styles.hoursCardRow}>
+                      <View>
+                        <Text style={styles.hoursCardLabel}>REQUIRED</Text>
+                        <Text style={styles.hoursCardReq}>{fmtH(req)}</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={styles.hoursCardLabel}>WORKED</Text>
+                        <Text style={[styles.hoursCardWorked, { color: met ? GREEN : AMBER }]}>{fmtH(worked)}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: met ? GREEN : INDIGO }]} />
+                    </View>
+                    <Text style={styles.hoursCardSub}>
+                      {req > 0 ? `${pct}% of target` : 'No working days yet'} · {data.workingDaysSoFar} days × {data.hoursPerDay || 8}h
+                    </Text>
+                  </View>
+                );
+              })()}
 
               {data.days.map(d => {
                 const st = dayVis(d);
@@ -431,6 +468,15 @@ const styles = StyleSheet.create({
   statBox: { flex: 1, alignItems: 'center' },
   statNum: { fontSize: 16, fontWeight: '800' },
   statLabel: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '700', marginTop: 2 },
+
+  hoursCard: { backgroundColor: '#fff', borderRadius: 16, padding: 14, marginBottom: 12, elevation: 1 },
+  hoursCardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  hoursCardLabel: { fontSize: 9.5, color: '#9CA3AF', fontWeight: '800', letterSpacing: 0.6 },
+  hoursCardReq: { fontSize: 18, fontWeight: '800', color: '#374151', marginTop: 2 },
+  hoursCardWorked: { fontSize: 18, fontWeight: '800', marginTop: 2 },
+  barTrack: { height: 8, borderRadius: 4, backgroundColor: '#EEF2FF', marginTop: 10, overflow: 'hidden' },
+  barFill: { height: 8, borderRadius: 4 },
+  hoursCardSub: { fontSize: 11, color: '#9CA3AF', fontWeight: '600', marginTop: 7 },
 
   dayRow: { flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: '#fff', borderRadius: 14, padding: 10, marginBottom: 8, elevation: 1 },
   dayBlock: { width: 44, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
