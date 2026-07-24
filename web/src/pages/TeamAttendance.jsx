@@ -5,7 +5,7 @@
 // All data comes from the /attendance/admin/* endpoints via the api helpers.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiGet, fileUrl } from '../lib/api';
+import { apiGet, apiPost, apiPatch, api, fileUrl } from '../lib/api';
 import {
   fmtTime,
   fmtDate,
@@ -19,8 +19,11 @@ import {
   CardBody,
   Button,
   Input,
+  Select,
+  Field,
   Badge,
   StatCard,
+  Spinner,
   Loading,
   EmptyState,
   ErrorNote,
@@ -38,7 +41,24 @@ import {
   IconInbox,
   IconMapPin,
   IconChevronLeft,
+  IconEdit,
+  IconTrash,
+  IconPlus,
 } from '../components/icons';
+
+/* Time helpers for the manual-entry editor — everything is IST (+05:30). */
+// ISO instant -> "HH:MM" for a <input type="time">.
+const isoToTimeInput = (iso) => {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('en-GB', {
+    hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata',
+  });
+};
+// "YYYY-MM-DD" + "HH:MM" (IST) -> ISO instant.
+const dateTimeToIso = (ymd, hhmm) => new Date(`${ymd}T${hhmm}:00+05:30`).toISOString();
+// IST calendar date ("YYYY-MM-DD") of an ISO instant.
+const isoToDateIST = (iso) =>
+  new Date(new Date(iso).getTime() + 5.5 * 3600000).toISOString().slice(0, 10);
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -132,22 +152,28 @@ function MonthUserDetail({ month, user, onBack }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [manage, setManage] = useState(null); // { userId, userName, date } | null
 
-  useEffect(() => {
-    let alive = true;
+  const load = useCallback(() => {
     setLoading(true);
     setError('');
-    apiGet(`/attendance/admin/month?month=${month}&userId=${user.userId}`)
-      .then((d) => alive && setData(d))
-      .catch((e) => alive && setError(e.message || 'Failed to load user month'))
-      .finally(() => alive && setLoading(false));
-    return () => {
-      alive = false;
-    };
+    return apiGet(`/attendance/admin/month?month=${month}&userId=${user.userId}`)
+      .then((d) => setData(d))
+      .catch((e) => setError(e.message || 'Failed to load user month'))
+      .finally(() => setLoading(false));
   }, [month, user.userId]);
+
+  useEffect(() => { load(); }, [load]);
 
   const stats = data?.stats;
   const days = data?.days || [];
+  const userName = user.fullName || user.username;
+
+  // Click a day to fix its punches. Future days aren't editable.
+  const openDay = (d) => {
+    if (d.status === 'future') return;
+    setManage({ userId: user.userId, userName, date: d.date });
+  };
 
   return (
     <div className="space-y-5">
@@ -179,6 +205,7 @@ function MonthUserDetail({ month, user, onBack }) {
             <EmptyState title="No days to show" icon={<IconCalendar />} />
           ) : (
             <div className="overflow-x-auto">
+              <p className="mb-2 text-xs text-slate-400">Tip: click any day to fix punches (e.g. a missing punch-out).</p>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
@@ -190,44 +217,64 @@ function MonthUserDetail({ month, user, onBack }) {
                     <th className="px-3 py-2 text-center font-semibold">Sessions</th>
                     <th className="px-3 py-2 text-right font-semibold">Hours</th>
                     <th className="px-3 py-2 font-semibold">Sites</th>
+                    <th className="px-3 py-2 text-right font-semibold">Edit</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {days.map((d) => (
-                    <tr key={d.date} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">{fmtDate(d.date)}</td>
-                      <td className="px-3 py-2.5 text-slate-500">{WEEKDAYS[d.weekday]}</td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-1.5">
-                          {/* A late day belongs to the "Late" bucket, not "Present",
-                              so it shows a Late badge instead of a green Present one —
-                              keeping the grid consistent with the on-time-only stats. */}
-                          {d.status === 'present' && d.late ? (
-                            <LateBadge late={d.late} lateLevel={d.lateLevel} />
+                  {days.map((d) => {
+                    const editable = d.status !== 'future';
+                    return (
+                      <tr
+                        key={d.date}
+                        onClick={() => openDay(d)}
+                        className={cx(
+                          'border-b border-slate-100',
+                          editable ? 'cursor-pointer hover:bg-brand-50/50' : 'opacity-60'
+                        )}
+                      >
+                        <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">{fmtDate(d.date)}</td>
+                        <td className="px-3 py-2.5 text-slate-500">{WEEKDAYS[d.weekday]}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center gap-1.5">
+                            {/* A late day belongs to the "Late" bucket, not "Present",
+                                so it shows a Late badge instead of a green Present one —
+                                keeping the grid consistent with the on-time-only stats. */}
+                            {d.status === 'present' && d.late ? (
+                              <LateBadge late={d.late} lateLevel={d.lateLevel} />
+                            ) : (
+                              <StatusBadge status={d.status} />
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 text-slate-600">{d.status === 'present' ? fmtTime(d.firstIn) : '—'}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{d.status === 'present' ? fmtTime(d.lastOut) : '—'}</td>
+                        <td className="px-3 py-2.5 text-center tabular-nums text-slate-600">
+                          {d.status === 'present' ? d.sessions : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">
+                          {d.status === 'present' ? fmtHours(d.hours) : '—'}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          {d.status === 'present' ? <SiteBadges sites={d.sites} /> : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {editable ? (
+                            <IconEdit className="ml-auto h-4 w-4 text-slate-400" />
                           ) : (
-                            <StatusBadge status={d.status} />
+                            <span className="text-slate-300">—</span>
                           )}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-slate-600">{d.status === 'present' ? fmtTime(d.firstIn) : '—'}</td>
-                      <td className="px-3 py-2.5 text-slate-600">{d.status === 'present' ? fmtTime(d.lastOut) : '—'}</td>
-                      <td className="px-3 py-2.5 text-center tabular-nums text-slate-600">
-                        {d.status === 'present' ? d.sessions : '—'}
-                      </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">
-                        {d.status === 'present' ? fmtHours(d.hours) : '—'}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {d.status === 'present' ? <SiteBadges sites={d.sites} /> : <span className="text-slate-300">—</span>}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </>
       )}
+
+      <DayManager ctx={manage} onClose={() => setManage(null)} onChanged={load} />
     </div>
   );
 }
@@ -315,7 +362,7 @@ function PhotoThumb({ path, label, address, time, onOpen }) {
   );
 }
 
-function DaySessionRow({ s, onOpenPhoto }) {
+function DaySessionRow({ s, onOpenPhoto, onEdit, onDelete }) {
   const open = !s.punchOutTime;
   return (
     <div className="flex flex-wrap items-center gap-4 border-t border-slate-100 py-3 first:border-t-0">
@@ -378,6 +425,16 @@ function DaySessionRow({ s, onOpenPhoto }) {
           onOpen={onOpenPhoto}
         />
       </div>
+
+      {/* Admin edit / delete */}
+      <div className="flex items-center gap-1.5">
+        <Button size="sm" variant="secondary" onClick={() => onEdit(s)} title="Edit session">
+          <IconEdit className="h-4 w-4" />
+        </Button>
+        <Button size="sm" variant="danger" onClick={() => onDelete(s)} title="Delete session">
+          <IconTrash className="h-4 w-4" />
+        </Button>
+      </div>
     </div>
   );
 }
@@ -395,6 +452,7 @@ function DayTab() {
   const [sesError, setSesError] = useState('');
 
   const [photo, setPhoto] = useState(null); // { url, label, address, time }
+  const [editor, setEditor] = useState(null); // { mode:'create'|'edit', session?, date, employees }
 
   const load = useCallback((d) => {
     let alive = true;
@@ -434,12 +492,41 @@ function DayTab() {
 
   const absent = summary?.absent || [];
 
+  // Combined employee list (present + absent) for the manual-entry picker.
+  const employees = useMemo(() => {
+    const map = new Map();
+    (summary?.present || []).forEach((p) => map.set(p.userId, { id: p.userId, username: p.username, fullName: p.fullName }));
+    (summary?.absent || []).forEach((a) => map.set(a.id, { id: a.id, username: a.username, fullName: a.fullName }));
+    return Array.from(map.values()).sort((a, b) => (a.fullName || a.username).localeCompare(b.fullName || b.username));
+  }, [summary]);
+
+  const openCreate = (userId) => setEditor({ mode: 'create', date, employees, userId: userId ?? '' });
+  const openEdit = (s) => setEditor({ mode: 'edit', session: s, date: isoToDateIST(s.punchInTime), employees });
+  const afterSave = () => { setEditor(null); load(date); };
+
+  const deleteSession = async (s) => {
+    const who = s.user?.fullName || s.user?.username || 'this employee';
+    if (!window.confirm(`Delete this punch session for ${who}?`)) return;
+    try {
+      await api(`/attendance/admin/session/${s.id}`, { method: 'DELETE' });
+      load(date);
+    } catch (e) {
+      alert(e.message || 'Delete failed');
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">Date</span>
-        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-48" />
-      </label>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Date</span>
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-48" />
+        </label>
+        <Button onClick={() => openCreate()}>
+          <IconPlus className="h-4 w-4" />
+          Add manual entry
+        </Button>
+      </div>
 
       {/* Day-level stat cards */}
       {sumLoading && (
@@ -500,7 +587,13 @@ function DayTab() {
                   </div>
                   <div>
                     {items.map((s) => (
-                      <DaySessionRow key={s.id} s={s} onOpenPhoto={setPhoto} />
+                      <DaySessionRow
+                        key={s.id}
+                        s={s}
+                        onOpenPhoto={setPhoto}
+                        onEdit={openEdit}
+                        onDelete={deleteSession}
+                      />
                     ))}
                   </div>
                 </CardBody>
@@ -525,6 +618,13 @@ function DayTab() {
                 >
                   <span className="font-medium text-slate-700">{u.fullName || u.username}</span>
                   <span className="text-xs text-slate-400">@{u.username}</span>
+                  <button
+                    onClick={() => openCreate(u.id)}
+                    title="Add attendance for this employee"
+                    className="ml-1 flex h-5 w-5 items-center justify-center rounded-md text-brand-600 hover:bg-brand-50"
+                  >
+                    <IconPlus className="h-4 w-4" />
+                  </button>
                 </span>
               ))}
             </div>
@@ -553,7 +653,224 @@ function DayTab() {
           </div>
         )}
       </Modal>
+
+      {/* Manual attendance entry / edit */}
+      <SessionEditor editor={editor} onClose={() => setEditor(null)} onSaved={afterSave} />
     </div>
+  );
+}
+
+/* ============================================= Manual attendance editor */
+// Create a session for a missed punch, or edit an existing one. All times IST.
+function SessionEditor({ editor, onClose, onSaved }) {
+  const open = !!editor;
+  const isEdit = editor?.mode === 'edit';
+
+  const [userId, setUserId] = useState('');
+  const [date, setDate] = useState(todayIST());
+  const [inTime, setInTime] = useState('09:30');
+  const [outTime, setOutTime] = useState('18:00');
+  const [site, setSite] = useState('SESS');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!editor) return;
+    setError('');
+    setBusy(false);
+    setDate(editor.date || todayIST());
+    if (editor.mode === 'edit' && editor.session) {
+      const s = editor.session;
+      setUserId(s.userId ?? s.user?.id ?? '');
+      setInTime(isoToTimeInput(s.punchInTime) || '09:30');
+      setOutTime(s.punchOutTime ? isoToTimeInput(s.punchOutTime) : '');
+      setSite(s.siteName || 'SESS');
+    } else {
+      setUserId(editor.userId ?? '');
+      setInTime('09:30');
+      setOutTime('18:00');
+      setSite('SESS');
+    }
+  }, [editor]);
+
+  const canSubmit = (isEdit || userId) && date && inTime && !busy;
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    if (!isEdit && !userId) { setError('Please choose an employee.'); return; }
+    if (!inTime) { setError('Punch-in time is required.'); return; }
+    if (outTime && outTime <= inTime) { setError('Punch-out must be after punch-in.'); return; }
+    setBusy(true);
+    setError('');
+    try {
+      const punchInTime = dateTimeToIso(date, inTime);
+      const punchOutTime = outTime ? dateTimeToIso(date, outTime) : null;
+      const body = { punchInTime, punchOutTime, siteName: site.trim() || 'SESS' };
+      if (isEdit) {
+        await apiPatch(`/attendance/admin/session/${editor.session.id}`, body);
+      } else {
+        await apiPost('/attendance/admin/session', { userId: Number(userId), ...body });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err.message || 'Could not save the session.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={busy ? undefined : onClose}
+      title={isEdit ? 'Edit attendance' : 'Add attendance'}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={!canSubmit}>
+            {busy ? (
+              <>
+                <Spinner className="h-4 w-4 text-current" />
+                <span>Saving…</span>
+              </>
+            ) : (
+              isEdit ? 'Save changes' : 'Add entry'
+            )}
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={submit} className="space-y-4">
+        {error && <ErrorNote>{error}</ErrorNote>}
+
+        <Field label="Employee">
+          {isEdit || editor?.userName ? (
+            // Employee is fixed (editing a session, or adding for a known person).
+            <Input
+              value={
+                editor?.userName ||
+                editor?.session?.user?.fullName ||
+                editor?.session?.user?.username ||
+                'Employee'
+              }
+              disabled
+            />
+          ) : (
+            <Select value={userId} onChange={(e) => setUserId(e.target.value)}>
+              <option value="">Select employee…</option>
+              {(editor?.employees || []).map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.fullName || u.username} (@{u.username})
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+
+        <Field label="Date">
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Punch in">
+            <Input type="time" value={inTime} onChange={(e) => setInTime(e.target.value)} />
+          </Field>
+          <Field label="Punch out" hint="Leave blank = still open">
+            <Input type="time" value={outTime} onChange={(e) => setOutTime(e.target.value)} />
+          </Field>
+        </div>
+
+        <Field label="Site">
+          <Input value={site} onChange={(e) => setSite(e.target.value)} placeholder="SESS" />
+        </Field>
+
+        <button type="submit" className="hidden" disabled={!canSubmit} aria-hidden="true" />
+      </form>
+    </Modal>
+  );
+}
+
+/* ================================================ Per-day session manager */
+// Opened by clicking a day. Lists that employee's sessions for the date and
+// lets the admin edit/delete each or add a new one (e.g. a missing punch-out).
+function DayManager({ ctx, onClose, onChanged }) {
+  const open = !!ctx;
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [editor, setEditor] = useState(null);
+
+  const load = useCallback(() => {
+    if (!ctx) return;
+    setLoading(true);
+    setError('');
+    apiGet(`/attendance/admin/day-sessions?date=${ctx.date}&userId=${ctx.userId}`)
+      .then((r) => setSessions(r.sessions || []))
+      .catch((e) => setError(e.message || 'Failed to load sessions'))
+      .finally(() => setLoading(false));
+  }, [ctx]);
+
+  useEffect(() => { if (ctx) load(); }, [ctx, load]);
+
+  const afterSave = () => { setEditor(null); load(); onChanged?.(); };
+
+  const del = async (s) => {
+    if (!window.confirm('Delete this punch session?')) return;
+    try {
+      await api(`/attendance/admin/session/${s.id}`, { method: 'DELETE' });
+      load();
+      onChanged?.();
+    } catch (e) {
+      alert(e.message || 'Delete failed');
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={ctx ? `${ctx.userName} · ${fmtDate(ctx.date)}` : ''}
+      footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
+    >
+      <div className="space-y-3">
+        {error && <ErrorNote>{error}</ErrorNote>}
+        {loading ? (
+          <Loading label="Loading sessions…" />
+        ) : sessions.length === 0 ? (
+          <p className="py-4 text-center text-sm text-slate-400">No punch sessions on this day.</p>
+        ) : (
+          sessions.map((s) => (
+            <div key={s.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <div className="flex-1">
+                <p className="font-semibold tabular-nums text-slate-800">
+                  {fmtTime(s.punchInTime)} → {s.punchOutTime ? fmtTime(s.punchOutTime) : <span className="text-amber-600">Open</span>}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {s.siteName || 'SESS'}{s.workingHours != null ? ` · ${fmtHours(s.workingHours)}` : ''}
+                </p>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => setEditor({ mode: 'edit', session: s, date: ctx.date })} title="Edit">
+                <IconEdit className="h-4 w-4" />
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => del(s)} title="Delete">
+                <IconTrash className="h-4 w-4" />
+              </Button>
+            </div>
+          ))
+        )}
+
+        <Button
+          className="w-full"
+          variant="secondary"
+          onClick={() => setEditor({ mode: 'create', date: ctx.date, userId: ctx.userId, userName: ctx.userName })}
+        >
+          <IconPlus className="h-4 w-4" />
+          Add session
+        </Button>
+      </div>
+
+      <SessionEditor editor={editor} onClose={() => setEditor(null)} onSaved={afterSave} />
+    </Modal>
   );
 }
 

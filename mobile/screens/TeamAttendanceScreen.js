@@ -25,6 +25,13 @@ const fmtH = (h) => {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 };
 const initials = (n) => (n || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+// Manual-entry time helpers (IST, +05:30)
+const HM_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
+const isoToHM = (iso) => iso
+  ? new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
+  : '';
+const hmToIso = (ymd, hm) => new Date(`${ymd}T${hm}:00+05:30`).toISOString();
+const isoDateIST = (iso) => new Date(new Date(iso).getTime() + 5.5 * 3600000).toISOString().slice(0, 10);
 const monthLabel = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const STATUS = {
@@ -50,6 +57,14 @@ export default function TeamAttendanceScreen({ navigation }) {
   const [calModal, setCalModal] = useState(false);
   const [search, setSearch] = useState('');
   const [exporting, setExporting] = useState(false);
+
+  // Attendance editing (admin)
+  const [manage, setManage] = useState(null);            // user whose sessions we're managing
+  const [manageDate, setManageDate] = useState(todayYMD()); // the day being managed
+  const [manageSessions, setManageSessions] = useState([]);
+  const [manageLoading, setManageLoading] = useState(false);
+  const [editor, setEditor] = useState(null);            // session editor modal state
+  const [savingEditor, setSavingEditor] = useState(false);
 
   useEffect(() => {
     api('/users').then(setUsers).catch(() => {});
@@ -132,6 +147,80 @@ export default function TeamAttendanceScreen({ navigation }) {
     finally { setExporting(false); }
   };
 
+  /* ---------- Attendance editing ---------- */
+  // Open the per-employee session manager for a given day (defaults to the
+  // day-view date; month view passes the tapped day's date).
+  const openManage = async (user, mDate = date) => {
+    setManage(user);
+    setManageDate(mDate);
+    setManageLoading(true);
+    setManageSessions([]);
+    try {
+      const res = await api(`/attendance/admin/day-sessions?date=${mDate}&userId=${user.id}`);
+      setManageSessions(res.sessions || []);
+    } catch (e) { Alert.alert('Error', e.message); }
+    finally { setManageLoading(false); }
+  };
+
+  const refreshManage = async (user, mDate = manageDate) => {
+    try {
+      const res = await api(`/attendance/admin/day-sessions?date=${mDate}&userId=${user.id}`);
+      setManageSessions(res.sessions || []);
+    } catch {}
+  };
+
+  // Editor for a new or existing session.
+  const openCreate = (user, cDate = date) => setEditor({
+    mode: 'create', userId: user.id, userName: user.fullName || user.username,
+    date: cDate, inTime: '09:30', outTime: '18:00', site: 'SESS',
+  });
+  const openEdit = (s, user) => setEditor({
+    mode: 'edit', sessionId: s.id, userId: user.id, userName: user.fullName || user.username,
+    date: isoDateIST(s.punchInTime),
+    inTime: isoToHM(s.punchInTime), outTime: s.punchOutTime ? isoToHM(s.punchOutTime) : '',
+    site: s.siteName || 'SESS',
+  });
+
+  const saveEditor = async () => {
+    const e = editor;
+    if (!HM_RE.test(e.inTime)) { Alert.alert('Invalid time', 'Punch-in must be HH:MM (24h), e.g. 09:30'); return; }
+    if (e.outTime && !HM_RE.test(e.outTime)) { Alert.alert('Invalid time', 'Punch-out must be HH:MM (24h) or blank'); return; }
+    if (e.outTime && e.outTime <= e.inTime) { Alert.alert('Invalid time', 'Punch-out must be after punch-in'); return; }
+    setSavingEditor(true);
+    try {
+      const body = {
+        punchInTime: hmToIso(e.date, e.inTime),
+        punchOutTime: e.outTime ? hmToIso(e.date, e.outTime) : null,
+        siteName: (e.site || 'SESS').trim(),
+      };
+      if (e.mode === 'edit') {
+        await api(`/attendance/admin/session/${e.sessionId}`, { method: 'PATCH', body: JSON.stringify(body) });
+      } else {
+        await api('/attendance/admin/session', { method: 'POST', body: JSON.stringify({ userId: e.userId, ...body }) });
+      }
+      setEditor(null);
+      if (manage) await refreshManage(manage);
+      load();
+    } catch (err) { Alert.alert('Save failed', err.message); }
+    finally { setSavingEditor(false); }
+  };
+
+  const deleteSession = (s, user) => {
+    Alert.alert('Delete session', 'Remove this punch session?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          try {
+            await api(`/attendance/admin/session/${s.id}`, { method: 'DELETE' });
+            if (user && manage) await refreshManage(user);
+            load();
+          } catch (err) { Alert.alert('Delete failed', err.message); }
+        },
+      },
+    ]);
+  };
+
   const filteredUsers = users.filter(u =>
     (u.username + ' ' + (u.fullName || '')).toLowerCase().includes(search.toLowerCase()));
 
@@ -210,7 +299,8 @@ export default function TeamAttendanceScreen({ navigation }) {
               </View>
 
               {dayPresent.map(p => (
-                <View key={p.userId} style={styles.card}>
+                <TouchableOpacity key={p.userId} style={styles.card} activeOpacity={0.85}
+                  onPress={() => openManage({ id: p.userId, username: p.username, fullName: p.fullName })}>
                   <View style={styles.avatar}><Text style={styles.avatarText}>{initials(p.fullName || p.username)}</Text></View>
                   <View style={{ flex: 1 }}>
                     <View style={styles.nameRow}>
@@ -224,17 +314,20 @@ export default function TeamAttendanceScreen({ navigation }) {
                     </View>
                   </View>
                   <View style={styles.hoursBox}><Text style={styles.hoursNum}>{fmtH(p.hours)}</Text></View>
-                </View>
+                  <MaterialIcons name="edit" size={16} color="#C4C4C4" style={{ marginLeft: 2 }} />
+                </TouchableOpacity>
               ))}
 
               {dayAbsent.length > 0 && (
                 <>
-                  <Text style={styles.absentTitle}>Absent ({dayAbsent.length})</Text>
+                  <Text style={styles.absentTitle}>Absent ({dayAbsent.length}) — tap to add attendance</Text>
                   <View style={styles.absentWrap}>
                     {dayAbsent.map(a => (
-                      <View key={a.id} style={styles.absentChip}>
+                      <TouchableOpacity key={a.id} style={styles.absentChip} activeOpacity={0.8}
+                        onPress={() => openCreate(a)}>
+                        <MaterialIcons name="add" size={14} color={RED} />
                         <Text style={styles.absentText}>{a.fullName || a.username}</Text>
-                      </View>
+                      </TouchableOpacity>
                     ))}
                   </View>
                 </>
@@ -312,10 +405,15 @@ export default function TeamAttendanceScreen({ navigation }) {
                 );
               })()}
 
+              <Text style={styles.editHint}>Tap any day to fix punches (e.g. missing punch-out)</Text>
               {data.days.map(d => {
                 const st = dayVis(d);
+                const editable = d.status !== 'future';
                 return (
-                  <View key={d.date} style={[styles.dayRow, d.status === 'future' && { opacity: 0.45 }]}>
+                  <TouchableOpacity key={d.date} activeOpacity={editable ? 0.85 : 1}
+                    disabled={!editable}
+                    onPress={() => editable && openManage(selected, d.date)}
+                    style={[styles.dayRow, d.status === 'future' && { opacity: 0.45 }]}>
                     <View style={[styles.dayBlock, { backgroundColor: st.bg }]}>
                       <Text style={[styles.dayNum, { color: st.color }]}>{d.date.slice(-2)}</Text>
                       <Text style={[styles.dayWd, { color: st.color }]}>{WD[d.weekday]}</Text>
@@ -339,7 +437,8 @@ export default function TeamAttendanceScreen({ navigation }) {
                       )}
                     </View>
                     {d.status === 'present' && <View style={styles.hoursBox}><Text style={styles.hoursNum}>{fmtH(d.hours)}</Text></View>}
-                  </View>
+                    {editable && <MaterialIcons name="edit" size={15} color="#C4C4C4" style={{ marginLeft: 4 }} />}
+                  </TouchableOpacity>
                 );
               })}
             </>
@@ -411,6 +510,90 @@ export default function TeamAttendanceScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+
+      {/* Manage sessions for one employee */}
+      <Modal visible={!!manage} transparent animationType="slide" onRequestClose={() => setManage(null)}>
+        <View style={styles.sheetOverlay}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>{manage?.fullName || manage?.username}</Text>
+            <Text style={styles.manageSub}>{manageDate} • {manageSessions.length} session{manageSessions.length === 1 ? '' : 's'}</Text>
+
+            {manageLoading ? (
+              <ActivityIndicator color={INDIGO} style={{ marginVertical: 20 }} />
+            ) : (
+              <ScrollView style={{ maxHeight: 320 }}>
+                {manageSessions.length === 0 && (
+                  <Text style={styles.manageEmpty}>No sessions on this day.</Text>
+                )}
+                {manageSessions.map(s => (
+                  <View key={s.id} style={styles.mSessionRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.mSessionTime}>
+                        {fmtT(s.punchInTime)} → {s.punchOutTime ? fmtT(s.punchOutTime) : 'Open'}
+                      </Text>
+                      <Text style={styles.mSessionSite}>{s.siteName || 'SESS'}{s.workingHours != null ? ` • ${fmtH(s.workingHours)}` : ''}</Text>
+                    </View>
+                    <TouchableOpacity style={styles.mIconBtn} onPress={() => openEdit(s, manage)}>
+                      <MaterialIcons name="edit" size={18} color={INDIGO} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.mIconBtn} onPress={() => deleteSession(s, manage)}>
+                      <MaterialIcons name="delete-outline" size={18} color={RED} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity style={styles.addSessionBtn} onPress={() => openCreate(manage, manageDate)}>
+              <MaterialIcons name="add" size={18} color="#fff" />
+              <Text style={styles.addSessionText}>Add session</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.sheetClose, { flex: undefined }]} onPress={() => setManage(null)}>
+              <Text style={styles.sheetCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Session editor (create / edit) */}
+      <Modal visible={!!editor} transparent animationType="fade" onRequestClose={() => setEditor(null)}>
+        <View style={styles.overlayCenter}>
+          <View style={styles.calCard}>
+            <Text style={styles.sheetTitle}>{editor?.mode === 'edit' ? 'Edit Attendance' : 'Add Attendance'}</Text>
+            <Text style={styles.manageSub}>{editor?.userName} • {editor?.date}</Text>
+
+            <Text style={styles.editorLabel}>PUNCH IN (HH:MM, 24h)</Text>
+            <TextInput
+              style={styles.editorInput} placeholder="09:30" placeholderTextColor="#9CA3AF"
+              keyboardType="numbers-and-punctuation" maxLength={5}
+              value={editor?.inTime} onChangeText={(t) => setEditor(e => ({ ...e, inTime: t }))}
+            />
+
+            <Text style={styles.editorLabel}>PUNCH OUT (blank = still open)</Text>
+            <TextInput
+              style={styles.editorInput} placeholder="18:00" placeholderTextColor="#9CA3AF"
+              keyboardType="numbers-and-punctuation" maxLength={5}
+              value={editor?.outTime} onChangeText={(t) => setEditor(e => ({ ...e, outTime: t }))}
+            />
+
+            <Text style={styles.editorLabel}>SITE</Text>
+            <TextInput
+              style={styles.editorInput} placeholder="SESS" placeholderTextColor="#9CA3AF"
+              value={editor?.site} onChangeText={(t) => setEditor(e => ({ ...e, site: t }))}
+            />
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity style={[styles.sheetClose, { flex: 1 }]} onPress={() => setEditor(null)} disabled={savingEditor}>
+                <Text style={styles.sheetCloseText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.todayBtn} onPress={saveEditor} disabled={savingEditor}>
+                {savingEditor ? <ActivityIndicator color="#fff" /> : <Text style={styles.todayText}>Save</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -457,7 +640,7 @@ const styles = StyleSheet.create({
 
   absentTitle: { fontSize: 13, fontWeight: '800', color: '#6B7280', marginTop: 8, marginBottom: 8 },
   absentWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  absentChip: { backgroundColor: '#FEE2E2', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 6 },
+  absentChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEE2E2', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 6 },
   absentText: { color: RED, fontSize: 12, fontWeight: '700' },
 
   wdText: { fontSize: 11.5, color: '#9CA3AF', fontWeight: '600', marginBottom: 10 },
@@ -477,6 +660,7 @@ const styles = StyleSheet.create({
   barTrack: { height: 8, borderRadius: 4, backgroundColor: '#EEF2FF', marginTop: 10, overflow: 'hidden' },
   barFill: { height: 8, borderRadius: 4 },
   hoursCardSub: { fontSize: 11, color: '#9CA3AF', fontWeight: '600', marginTop: 7 },
+  editHint: { fontSize: 11, color: '#9CA3AF', fontWeight: '600', marginBottom: 8, fontStyle: 'italic' },
 
   dayRow: { flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: '#fff', borderRadius: 14, padding: 10, marginBottom: 8, elevation: 1 },
   dayBlock: { width: 44, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
@@ -503,4 +687,15 @@ const styles = StyleSheet.create({
   calCard: { backgroundColor: '#fff', borderRadius: 24, padding: 16 },
   todayBtn: { flex: 1, height: 46, borderRadius: 13, backgroundColor: INDIGO, justifyContent: 'center', alignItems: 'center' },
   todayText: { color: '#fff', fontWeight: '800' },
+
+  manageSub: { fontSize: 12, color: '#9CA3AF', fontWeight: '600', textAlign: 'center', marginTop: -6, marginBottom: 10 },
+  manageEmpty: { fontSize: 13, color: '#9CA3AF', textAlign: 'center', paddingVertical: 20 },
+  mSessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#F9FAFB', borderRadius: 12, padding: 12, marginBottom: 8 },
+  mSessionTime: { fontSize: 14, fontWeight: '800', color: '#111827' },
+  mSessionSite: { fontSize: 11.5, color: '#6B7280', fontWeight: '600', marginTop: 2 },
+  mIconBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
+  addSessionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: INDIGO, borderRadius: 13, height: 48, marginTop: 6, marginBottom: 10 },
+  addSessionText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  editorLabel: { fontSize: 10.5, fontWeight: '800', color: '#9CA3AF', letterSpacing: 0.6, marginTop: 12, marginBottom: 6 },
+  editorInput: { backgroundColor: '#F9FAFB', borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 12, height: 48, fontSize: 15, color: '#111827', fontWeight: '600' },
 });

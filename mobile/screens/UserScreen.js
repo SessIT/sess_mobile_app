@@ -35,11 +35,15 @@ export default function UsersScreen({ navigation }) {
     return unsub;
   }, [navigation, load]);
 
-  const toggleStatus = (u) => {
+  const openActions = (u) => {
     Alert.alert(
       u.fullName || u.username,
       `@${u.username}${u.phone ? ` • +91 ${u.phone}` : ''}`,
       [
+        {
+          text: 'Edit ✏️',
+          onPress: () => navigation.navigate('EditUser', { user: u }),
+        },
         {
           text: u.isActive ? 'Deactivate ⛔' : 'Activate ✅',
           style: u.isActive ? 'destructive' : 'default',
@@ -119,7 +123,7 @@ export default function UsersScreen({ navigation }) {
             </View>
           }
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={() => toggleStatus(item)}>
+            <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={() => openActions(item)}>
               <View style={[styles.avatar, !item.isActive && { backgroundColor: '#F3F4F6' }]}>
                 <Text style={[styles.avatarText, !item.isActive && { color: '#9CA3AF' }]}>{initials(item)}</Text>
               </View>

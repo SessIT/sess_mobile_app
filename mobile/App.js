@@ -7,6 +7,7 @@ import DashboardScreen from './screens/DashboardScreen';
 import { getAuth } from './lib/auth';
 import UsersScreen from './screens/UserScreen';
 import CreateUserScreen from './screens/CreateUserScreen';
+import EditUserScreen from './screens/EditUserScreen';
 import PunchScreen from './screens/PunchScreen';
 import TeamTrailScreen from './screens/TeamTrailScreen';
 import MyAttendanceScreen from './screens/MyAttendanceScreen';
@@ -54,6 +55,7 @@ export default function App() {
         />
         <Stack.Screen name="Users" component={UsersScreen} />
         <Stack.Screen name="CreateUser" component={CreateUserScreen} />
+        <Stack.Screen name="EditUser" component={EditUserScreen} />
         <Stack.Screen name="Punch" component={PunchScreen} />
         <Stack.Screen name="TeamTrail" component={TeamTrailScreen} />
         <Stack.Screen name="MyAttendance" component={MyAttendanceScreen} />

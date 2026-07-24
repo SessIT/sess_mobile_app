@@ -367,4 +367,107 @@ router.get('/my-day', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
+/* ============== ADMIN ATTENDANCE EDITING ==============
+ * Lets an admin fix attendance when an employee forgot to punch in/out:
+ * create a session manually, edit its times, or delete a wrong one.
+ * Times come in as ISO strings (the client builds them from an IST date+time). */
+
+const roundHours = (ms) => Math.round((ms / 3600000) * 100) / 100;
+
+// POST /api/attendance/admin/session — create a manual session for a user
+router.post('/admin/session', requireRole(ADMIN), async (req, res) => {
+  try {
+    const { userId, punchInTime, punchOutTime, siteName, punchInAddress, punchOutAddress } = req.body || {};
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+
+    const pin = new Date(punchInTime);
+    if (isNaN(pin)) return res.status(400).json({ message: 'A valid punch-in time is required' });
+
+    let pout = null, workingHours = null;
+    if (punchOutTime) {
+      pout = new Date(punchOutTime);
+      if (isNaN(pout)) return res.status(400).json({ message: 'Invalid punch-out time' });
+      if (pout <= pin) return res.status(400).json({ message: 'Punch-out must be after punch-in' });
+      workingHours = roundHours(pout - pin);
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: Number(userId) } });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const session = await prisma.attendanceSession.create({
+      data: {
+        userId: Number(userId),
+        punchInTime: pin,
+        punchOutTime: pout,
+        workingHours,
+        isLate: isLateLevel(lateLevelOf(pin)),
+        siteName: (siteName || 'SESS').trim().slice(0, 60),
+        punchInAddress: punchInAddress || null,
+        punchOutAddress: punchOutAddress || null,
+      },
+    });
+    res.status(201).json(session);
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// PATCH /api/attendance/admin/session/:id — edit an existing session's times/site
+router.patch('/admin/session/:id', requireRole(ADMIN), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = await prisma.attendanceSession.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ message: 'Session not found' });
+
+    const { punchInTime, punchOutTime, siteName, punchInAddress, punchOutAddress } = req.body || {};
+    const data = {};
+
+    if (punchInTime !== undefined) {
+      const pin = new Date(punchInTime);
+      if (isNaN(pin)) return res.status(400).json({ message: 'Invalid punch-in time' });
+      data.punchInTime = pin;
+      data.isLate = isLateLevel(lateLevelOf(pin));
+    }
+    if (siteName !== undefined) data.siteName = (siteName || 'SESS').trim().slice(0, 60);
+    if (punchInAddress !== undefined) data.punchInAddress = punchInAddress || null;
+    if (punchOutAddress !== undefined) data.punchOutAddress = punchOutAddress || null;
+
+    const finalIn = data.punchInTime || existing.punchInTime;
+
+    if (punchOutTime !== undefined) {
+      if (punchOutTime === null || punchOutTime === '') {
+        // Re-open the session (clear the punch-out).
+        data.punchOutTime = null;
+        data.workingHours = null;
+      } else {
+        const pout = new Date(punchOutTime);
+        if (isNaN(pout)) return res.status(400).json({ message: 'Invalid punch-out time' });
+        if (pout <= finalIn) return res.status(400).json({ message: 'Punch-out must be after punch-in' });
+        data.punchOutTime = pout;
+        data.workingHours = roundHours(pout - finalIn);
+      }
+    } else if (data.punchInTime && existing.punchOutTime) {
+      // Punch-in moved but punch-out unchanged — recompute hours (and re-validate order).
+      if (existing.punchOutTime <= finalIn)
+        return res.status(400).json({ message: 'Punch-out must be after punch-in' });
+      data.workingHours = roundHours(existing.punchOutTime - finalIn);
+    }
+
+    const updated = await prisma.attendanceSession.update({ where: { id }, data });
+    res.json(updated);
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ message: 'Session not found' });
+    console.error(e); res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE /api/attendance/admin/session/:id — remove a wrong session
+router.delete('/admin/session/:id', requireRole(ADMIN), async (req, res) => {
+  try {
+    await prisma.attendanceSession.delete({ where: { id: Number(req.params.id) } });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ message: 'Session not found' });
+    console.error(e); res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;

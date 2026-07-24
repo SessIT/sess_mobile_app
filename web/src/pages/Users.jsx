@@ -15,7 +15,7 @@ import {
   Modal,
   Spinner,
 } from '../components/ui';
-import { IconUserPlus, IconUserCircle, IconSearch } from '../components/icons';
+import { IconUserPlus, IconUserCircle, IconSearch, IconEdit } from '../components/icons';
 
 // User management — list every account, create new ones, toggle active status.
 export default function Users() {
@@ -29,6 +29,8 @@ export default function Users() {
 
   // Create-user modal state
   const [createOpen, setCreateOpen] = useState(false);
+  // Edit-user modal state (holds the user being edited, or null)
+  const [editUser, setEditUser] = useState(null);
 
   // Load users + roles in parallel on mount.
   useEffect(() => {
@@ -85,6 +87,12 @@ export default function Users() {
   const onCreated = (user) => {
     setUsers((prev) => [user, ...prev]);
     setCreateOpen(false);
+  };
+
+  // Replace an edited user in place.
+  const onUpdated = (user) => {
+    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, ...user } : u)));
+    setEditUser(null);
   };
 
   return (
@@ -168,24 +176,30 @@ export default function Users() {
                         )}
                       </td>
                       <td className="px-5 py-3 text-slate-600">{fmtDate(u.createdAt)}</td>
-                      <td className="px-5 py-3 text-right">
-                        <Button
-                          size="sm"
-                          variant={u.isActive ? 'danger' : 'success'}
-                          disabled={busy}
-                          onClick={() => toggleStatus(u)}
-                        >
-                          {busy ? (
-                            <>
-                              <Spinner className="h-4 w-4 text-current" />
-                              <span>Saving…</span>
-                            </>
-                          ) : u.isActive ? (
-                            'Deactivate'
-                          ) : (
-                            'Activate'
-                          )}
-                        </Button>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button size="sm" variant="secondary" onClick={() => setEditUser(u)}>
+                            <IconEdit className="h-4 w-4" />
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={u.isActive ? 'danger' : 'success'}
+                            disabled={busy}
+                            onClick={() => toggleStatus(u)}
+                          >
+                            {busy ? (
+                              <>
+                                <Spinner className="h-4 w-4 text-current" />
+                                <span>Saving…</span>
+                              </>
+                            ) : u.isActive ? (
+                              'Deactivate'
+                            ) : (
+                              'Activate'
+                            )}
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -201,6 +215,13 @@ export default function Users() {
         roles={roles}
         onClose={() => setCreateOpen(false)}
         onCreated={onCreated}
+      />
+
+      <EditUserModal
+        user={editUser}
+        roles={roles}
+        onClose={() => setEditUser(null)}
+        onUpdated={onUpdated}
       />
     </div>
   );
@@ -325,6 +346,135 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
         </Field>
 
         {/* Hidden submit so Enter submits the form. */}
+        <button type="submit" className="hidden" disabled={!canSubmit} aria-hidden="true" />
+      </form>
+    </Modal>
+  );
+}
+
+/* ----------------------------------------------------------- Edit modal */
+function EditUserModal({ user, roles, onClose, onUpdated }) {
+  const open = !!user;
+  const [fullName, setFullName] = useState('');
+  const [username, setUsername] = useState('');
+  const [phone, setPhone] = useState('');
+  const [roleName, setRoleName] = useState('');
+  const [password, setPassword] = useState(''); // blank = keep current
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  // Prefill from the selected user whenever the modal opens.
+  useEffect(() => {
+    if (user) {
+      setFullName(user.fullName || '');
+      setUsername(user.username || '');
+      setPhone(user.phone || '');
+      setRoleName(user.roles?.[0] || roles[0] || '');
+      setPassword('');
+      setError('');
+      setBusy(false);
+    }
+  }, [user, roles]);
+
+  const canSubmit = username.trim() && roleName && (!phone || phone.length === 10) && !busy;
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    if (!username.trim()) {
+      setError('Username is required.');
+      return;
+    }
+    if (phone && phone.length !== 10) {
+      setError('Phone must be a 10-digit mobile number.');
+      return;
+    }
+    if (password && password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const body = {
+        username: username.trim(),
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        roleName,
+      };
+      if (password) body.password = password; // only send when resetting
+      const updated = await apiPatch(`/users/${user.id}`, body);
+      onUpdated(updated);
+    } catch (err) {
+      setError(err.message || 'Could not update user.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={busy ? undefined : onClose}
+      title="Edit User"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={!canSubmit}>
+            {busy ? (
+              <>
+                <Spinner className="h-4 w-4 text-current" />
+                <span>Saving…</span>
+              </>
+            ) : (
+              'Save changes'
+            )}
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={submit} className="space-y-4">
+        {error && <ErrorNote>{error}</ErrorNote>}
+
+        <Field label="Full name">
+          <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Ilamparithi SDE" autoFocus />
+        </Field>
+
+        <Field label="Username">
+          <Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" />
+        </Field>
+
+        <Field label="Phone" hint="10-digit mobile used for OTP login. Leave blank to clear.">
+          <Input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+            placeholder="9876543210"
+            inputMode="numeric"
+          />
+        </Field>
+
+        <Field label="Role">
+          <Select value={roleName} onChange={(e) => setRoleName(e.target.value)}>
+            {roles.length === 0 && <option value="">No roles available</option>}
+            {roles.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field label="Reset password" hint="Leave blank to keep the current password.">
+          <Input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            autoComplete="new-password"
+          />
+        </Field>
+
         <button type="submit" className="hidden" disabled={!canSubmit} aria-hidden="true" />
       </form>
     </Modal>
