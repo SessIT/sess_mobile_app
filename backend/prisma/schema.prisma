@@ -18,6 +18,8 @@ model User {
   attendance   AttendanceSession[]
   phone        String?    @unique
   locationLogs LocationLog[]
+  leaveRequests  LeaveRequest[] @relation("userLeaves")
+  reviewedLeaves LeaveRequest[] @relation("reviewedLeaves")
 
   @@map("users")
 }
@@ -74,6 +76,50 @@ model OtpCode {
 
   @@index([phone])
   @@map("otp_codes")
+}
+
+model LeaveType {
+  id       Int            @id @default(autoincrement())
+  code     String         @unique // CL, SL, PL
+  name     String
+  active   Boolean        @default(true)
+  policies LeavePolicy[]
+  requests LeaveRequest[]
+
+  @@map("leave_types")
+}
+
+model LeavePolicy {
+  id          Int       @id @default(autoincrement())
+  year        Int
+  leaveTypeId Int       @map("leave_type_id")
+  quota       Float // days allocated for the year
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([year, leaveTypeId])
+  @@map("leave_policies")
+}
+
+model LeaveRequest {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  leaveTypeId  Int       @map("leave_type_id")
+  startDate    DateTime  @map("start_date") @db.Date
+  endDate      DateTime  @map("end_date") @db.Date
+  halfDay      Boolean   @default(false) @map("half_day")
+  days         Float
+  reason       String?
+  status       String    @default("pending") // pending | approved | rejected | cancelled
+  appliedAt    DateTime  @default(now()) @map("applied_at")
+  reviewedById Int?      @map("reviewed_by_id")
+  reviewedAt   DateTime? @map("reviewed_at")
+  reviewNote   String?   @map("review_note")
+  user         User      @relation("userLeaves", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy   User?     @relation("reviewedLeaves", fields: [reviewedById], references: [id])
+  leaveType    LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([userId, startDate])
+  @@map("leave_requests")
 }
 
 model Holiday {

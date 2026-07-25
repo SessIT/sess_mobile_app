@@ -29,7 +29,7 @@ import {
   ErrorNote,
   PageHeader,
 } from '../components/ui';
-import { IconMap, IconMapPin } from '../components/icons';
+import { IconMap, IconMapPin, IconDownload } from '../components/icons';
 
 // Geographic centre of India — the default view before any trail is loaded.
 const INDIA_CENTER = [20.5937, 78.9629];
@@ -138,6 +138,38 @@ export default function TeamTrail() {
 
   const selectedUser = users.find((u) => String(u.id) === String(userId));
 
+  // Download the loaded trail as a CSV (one row per captured point).
+  const exportCsv = () => {
+    if (!points.length) return;
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const name = selectedUser?.fullName || selectedUser?.username || 'employee';
+    const lines = [
+      `Employee:,${esc(name)}`,
+      `Date:,${date}`,
+      `Points:,${points.length}`,
+      '',
+      'No,Time,Latitude,Longitude,Accuracy(m),Address,MapLink',
+      ...points.map((p, i) => [
+        i + 1,
+        esc(fmtTime(p.capturedAt)),
+        Number(p.lat).toFixed(6),
+        Number(p.lng).toFixed(6),
+        p.acc != null ? Math.round(Number(p.acc)) : '',
+        esc(p.address || ''),
+        esc(`https://www.google.com/maps?q=${Number(p.lat)},${Number(p.lng)}`),
+      ].join(',')),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `trail_${selectedUser?.username || 'employee'}_${date}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="mx-auto w-full max-w-6xl overflow-x-hidden px-4 py-6">
       <PageHeader
@@ -145,7 +177,13 @@ export default function TeamTrail() {
         subtitle="Trace an employee's field location trail for a chosen day."
         actions={
           selectedUser && loaded && points.length > 0 ? (
-            <Badge tone="blue">{points.length} points</Badge>
+            <div className="flex items-center gap-3">
+              <Badge tone="blue">{points.length} points</Badge>
+              <Button variant="secondary" onClick={exportCsv}>
+                <IconDownload className="h-4 w-4" />
+                Export CSV
+              </Button>
+            </div>
           ) : null
         }
       />

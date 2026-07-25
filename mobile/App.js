@@ -13,6 +13,8 @@ import TeamTrailScreen from './screens/TeamTrailScreen';
 import MyAttendanceScreen from './screens/MyAttendanceScreen';
 import TeamAttendanceScreen from './screens/TeamAttendanceScreen';
 import HolidaysScreen from './screens/HolidaysScreen';
+import LeaveScreen from './screens/LeaveScreen';
+import LeaveApprovalsScreen from './screens/LeaveApprovalsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -61,6 +63,8 @@ export default function App() {
         <Stack.Screen name="MyAttendance" component={MyAttendanceScreen} />
         <Stack.Screen name="TeamAttendance" component={TeamAttendanceScreen} />
         <Stack.Screen name="Holidays" component={HolidaysScreen} />
+        <Stack.Screen name="Leave" component={LeaveScreen} />
+        <Stack.Screen name="LeaveApprovals" component={LeaveApprovalsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

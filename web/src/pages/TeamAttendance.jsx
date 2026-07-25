@@ -44,6 +44,7 @@ import {
   IconEdit,
   IconTrash,
   IconPlus,
+  IconLeave,
 } from '../components/icons';
 
 /* Time helpers for the manual-entry editor — everything is IST (+05:30). */
@@ -66,6 +67,7 @@ const isoToDateIST = (iso) =>
 function StatusBadge({ status }) {
   const map = {
     present: { tone: 'green', label: 'Present' },
+    leave: { tone: 'blue', label: 'Paid Leave' },
     absent: { tone: 'red', label: 'Absent' },
     weekoff: { tone: 'slate', label: 'Week off' },
     future: { tone: 'gray', label: '—' },
@@ -95,6 +97,34 @@ function SiteBadges({ sites }) {
   );
 }
 
+// Compact, equal-height stat tile — value stays on one line so the row aligns.
+function MiniStat({ label, value, sub, tone = 'slate', icon }) {
+  const chip = {
+    green: 'bg-emerald-50 text-emerald-600',
+    red: 'bg-red-50 text-red-600',
+    amber: 'bg-amber-50 text-amber-600',
+    slate: 'bg-slate-100 text-slate-500',
+    blue: 'bg-brand-50 text-brand-700',
+  };
+  const valTone = {
+    green: 'text-emerald-600',
+    red: 'text-red-600',
+    amber: 'text-amber-600',
+    slate: 'text-slate-800',
+    blue: 'text-brand-700',
+  };
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+      <div className="flex items-center gap-2">
+        <span className={cx('flex h-6 w-6 shrink-0 items-center justify-center rounded-lg', chip[tone])}>{icon}</span>
+        <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
+      </div>
+      <p className={cx('mt-2 whitespace-nowrap text-2xl font-bold tabular-nums', valTone[tone])}>{value}</p>
+      <p className="min-h-[15px] text-[11px] text-slate-400">{sub || ''}</p>
+    </div>
+  );
+}
+
 /* ============================================================ Month: summary */
 
 function MonthSummaryTable({ rows, onPick, requiredHours }) {
@@ -109,6 +139,7 @@ function MonthSummaryTable({ rows, onPick, requiredHours }) {
             <th className="px-3 py-2 font-semibold">Name</th>
             <th className="px-3 py-2 text-center font-semibold">Present</th>
             <th className="px-3 py-2 text-center font-semibold">Leave</th>
+            <th className="px-3 py-2 text-center font-semibold">Absent</th>
             <th className="px-3 py-2 text-center font-semibold">Late</th>
             <th className="px-3 py-2 text-right font-semibold">Required</th>
             <th className="px-3 py-2 text-right font-semibold">Worked</th>
@@ -116,8 +147,9 @@ function MonthSummaryTable({ rows, onPick, requiredHours }) {
         </thead>
         <tbody>
           {rows.map((r) => {
-            // Short of the target usually means leave/half-days — flag amber, not alarming red.
-            const short = requiredHours != null && r.hours < requiredHours;
+            // Per-employee required excludes their approved leave; short = amber.
+            const req = r.requiredHours != null ? r.requiredHours : requiredHours;
+            const short = req != null && r.hours < req;
             return (
               <tr
                 key={r.userId}
@@ -129,10 +161,11 @@ function MonthSummaryTable({ rows, onPick, requiredHours }) {
                   <p className="text-xs text-slate-400">@{r.username}</p>
                 </td>
                 <td className="px-3 py-2.5 text-center font-semibold text-emerald-600">{r.present}</td>
+                <td className="px-3 py-2.5 text-center font-semibold text-brand-700">{r.leave ?? 0}</td>
                 <td className="px-3 py-2.5 text-center font-semibold text-red-600">{r.absent}</td>
                 <td className="px-3 py-2.5 text-center font-semibold text-amber-600">{r.late}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-slate-400">
-                  {requiredHours != null ? fmtHours(requiredHours) : '—'}
+                  {req != null ? fmtHours(req) : '—'}
                 </td>
                 <td className={cx('px-3 py-2.5 text-right font-semibold tabular-nums', short ? 'text-amber-600' : 'text-emerald-600')}>
                   {fmtHours(r.hours)}
@@ -193,12 +226,13 @@ function MonthUserDetail({ month, user, onBack }) {
 
       {!loading && !error && stats && (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <StatCard label="Present" value={stats.present} tone="green" icon={<IconCheckCircle className="h-5 w-5" />} />
-            <StatCard label="Leave" value={stats.absent} tone="red" icon={<IconBan className="h-5 w-5" />} />
-            <StatCard label="Late" value={stats.late} tone="amber" icon={<IconClock className="h-5 w-5" />} />
-            <StatCard label="Required hrs" value={fmtHours(data.requiredHours)} sub={data.hoursPerDay ? `${data.hoursPerDay} h/day` : undefined} tone="slate" icon={<IconCalendar className="h-5 w-5" />} />
-            <StatCard label="Worked hrs" value={fmtHours(stats.hours)} tone="blue" icon={<IconTimer className="h-5 w-5" />} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <MiniStat label="Present" value={stats.present} tone="green" icon={<IconCheckCircle className="h-4 w-4" />} />
+            <MiniStat label="Leave" value={stats.leave ?? 0} tone="blue" icon={<IconLeave className="h-4 w-4" />} />
+            <MiniStat label="Absent" value={stats.absent} tone="red" icon={<IconBan className="h-4 w-4" />} />
+            <MiniStat label="Late" value={stats.late} tone="amber" icon={<IconClock className="h-4 w-4" />} />
+            <MiniStat label="Required" value={fmtHours(data.requiredHours)} sub={data.hoursPerDay ? `${data.hoursPerDay} h/day` : ''} tone="slate" icon={<IconCalendar className="h-4 w-4" />} />
+            <MiniStat label="Worked" value={fmtHours(stats.hours)} tone="blue" icon={<IconTimer className="h-4 w-4" />} />
           </div>
 
           {days.length === 0 ? (
@@ -314,7 +348,7 @@ function MonthTab() {
             className="w-48"
           />
         </label>
-        {data && (
+        {data && !selected && (
           <p className="pb-2 text-sm text-slate-500">
             <span className="font-semibold text-slate-700">{data.workingDaysSoFar}</span> working days so far
             {data.requiredHours != null && (

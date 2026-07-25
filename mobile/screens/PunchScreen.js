@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  Modal, Image, ScrollView, Alert, TextInput,
+  Modal, Image, ScrollView, Alert, TextInput, Linking,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -41,6 +41,7 @@ export default function PunchScreen({ navigation }) {
   const [locPermission, requestLocPermission] = Location.useForegroundPermissions();
   const prefetchRef = useRef({ coords: null, address: null, at: 0, promise: null });
   const [locReady, setLocReady] = useState(false);
+  const [locError, setLocError] = useState(null); // human-readable location failure, or null
   const [pending, setPending] = useState(0);
   const [locModal, setLocModal] = useState(false);
   const [detailModal, setDetailModal] = useState(null); // session object | null
@@ -77,17 +78,48 @@ export default function PunchScreen({ navigation }) {
   const totalHours = sessions.reduce((sum, s) => sum + (s.workingHours || 0), 0)
     + (openSession ? (now - new Date(openSession.punchInTime)) / 3600000 : 0);
 
-  /* ---------- location prefetch (single-flight) ---------- */
+  /* ---------- location prefetch (single-flight) ----------
+   * Speed + resilience: check GPS is on, seed instantly from last-known so the
+   * button unlocks fast, then refine with a fresh fix (10s cap). Any failure
+   * sets a human-readable `locError` so the UI can show a Retry instead of
+   * hanging on "Locating…" forever. */
   const prefetchLocation = useCallback(() => {
     if (!locPermission?.granted) return Promise.resolve(null);
     if (prefetchRef.current.promise) return prefetchRef.current.promise;
     const p = (async () => {
       try {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const enabled = await Location.hasServicesEnabledAsync();
+        if (!enabled) {
+          prefetchRef.current.promise = null;
+          setLocReady(false);
+          setLocError('Location (GPS) is off. Turn it on, then retry.');
+          return null;
+        }
+
+        // Fast path: last-known fix unlocks the button immediately.
+        if (!prefetchRef.current.coords) {
+          try {
+            const last = await Location.getLastKnownPositionAsync();
+            if (last) {
+              prefetchRef.current = {
+                coords: { lat: last.coords.latitude, lng: last.coords.longitude, acc: Math.round(last.coords.accuracy ?? 0) },
+                address: null, at: Date.now(), promise: prefetchRef.current.promise,
+              };
+              setLocReady(true);
+              setLocError(null);
+            }
+          } catch {}
+        }
+
+        // Accurate path: fresh fix, but don't wait forever.
+        const loc = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)),
+        ]);
         const coords = {
           lat: loc.coords.latitude,
           lng: loc.coords.longitude,
-          acc: Math.round(loc.coords.accuracy),
+          acc: Math.round(loc.coords.accuracy ?? 0),
         };
         let address = null;
         try {
@@ -99,10 +131,14 @@ export default function PunchScreen({ navigation }) {
         } catch {}
         prefetchRef.current = { coords, address, at: Date.now(), promise: null };
         setLocReady(true);
+        setLocError(null);
         return prefetchRef.current;
       } catch {
         prefetchRef.current.promise = null;
+        // If a last-known fix already unlocked us, keep it usable; only error when we have nothing.
+        if (prefetchRef.current.coords) return prefetchRef.current;
         setLocReady(false);
+        setLocError('Could not get your location. Move to an open area and retry.');
         return null;
       }
     })();
@@ -117,6 +153,39 @@ export default function PunchScreen({ navigation }) {
       return () => clearInterval(t);
     }
   }, [locPermission?.granted, prefetchLocation]);
+
+  /* ---------- permissions: request, and re-ask on each tap ----------
+   * If the OS has permanently blocked a permission (canAskAgain === false) it
+   * won't show the dialog again — so we route the user to Settings instead of
+   * silently doing nothing. */
+  const requestAllPermissions = async () => {
+    let cam = permission;
+    if (!cam?.granted) cam = await requestPermission();
+    let loc = locPermission;
+    if (!loc?.granted) loc = await requestLocPermission();
+
+    const camBlocked = cam && !cam.granted && cam.canAskAgain === false;
+    const locBlocked = loc && !loc.granted && loc.canAskAgain === false;
+    if (camBlocked || locBlocked) {
+      Alert.alert(
+        'Permission needed',
+        'Camera and location access are required to punch in/out. Please enable them in Settings.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]
+      );
+    } else if (loc?.granted) {
+      setLocError(null);
+      prefetchLocation();
+    }
+  };
+
+  // Main button: retry location if it failed, otherwise capture the selfie.
+  const onPunchPress = () => {
+    if (locError) { setLocError(null); prefetchLocation(); return; }
+    capture();
+  };
 
   /* ---------- capture (silent shutter) ---------- */
   const capture = async () => {
@@ -239,14 +308,37 @@ export default function PunchScreen({ navigation }) {
             <View style={styles.permIcon}>
               <MaterialIcons name="verified-user" size={30} color={INDIGO} />
             </View>
-            <Text style={styles.permTitle}>One-time Setup</Text>
+            <Text style={styles.permTitle}>Access Required</Text>
             <Text style={styles.permText}>
-              Attendance proof-ku camera (selfie) + location (address) access venum
+              Punch In/Out needs camera (selfie) + location (address). Without both, attendance can't be recorded.
             </Text>
-            <TouchableOpacity style={styles.permBtn} activeOpacity={0.85}
-              onPress={async () => { await requestPermission(); await requestLocPermission(); }}>
+
+            {/* Which permissions are still missing */}
+            <View style={styles.permStatusRow}>
+              <View style={styles.permStatusItem}>
+                <MaterialIcons
+                  name={permission?.granted ? 'check-circle' : 'cancel'}
+                  size={16}
+                  color={permission?.granted ? GREEN : RED}
+                />
+                <Text style={styles.permStatusText}>Camera</Text>
+              </View>
+              <View style={styles.permStatusItem}>
+                <MaterialIcons
+                  name={locPermission?.granted ? 'check-circle' : 'cancel'}
+                  size={16}
+                  color={locPermission?.granted ? GREEN : RED}
+                />
+                <Text style={styles.permStatusText}>Location</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity style={styles.permBtn} activeOpacity={0.85} onPress={requestAllPermissions}>
               <MaterialIcons name="lock-open" size={17} color="#fff" />
               <Text style={styles.permBtnText}>Allow Access</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => Linking.openSettings()} style={{ marginTop: 12 }}>
+              <Text style={styles.permSettingsLink}>Already denied? Open device Settings</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -257,34 +349,45 @@ export default function PunchScreen({ navigation }) {
               </View>
             </View>
 
-            <View style={styles.locChip}>
-              <View style={[styles.locDot, { backgroundColor: locReady ? GREEN : AMBER }]} />
-              <Text style={styles.locChipText}>
-                {locReady ? (prefetchRef.current.address ? prefetchRef.current.address.split(',').slice(0, 2).join(', ') : 'Location ready') : 'Locating…'}
+            <View style={[styles.locChip, locError && styles.locChipError]}>
+              <View style={[styles.locDot, { backgroundColor: locError ? RED : locReady ? GREEN : AMBER }]} />
+              <Text style={[styles.locChipText, locError && { color: RED }]} numberOfLines={2}>
+                {locError
+                  ? locError
+                  : locReady
+                    ? (prefetchRef.current.address ? prefetchRef.current.address.split(',').slice(0, 2).join(', ') : 'Location ready')
+                    : 'Locating…'}
               </Text>
             </View>
 
-            <TouchableOpacity
-              style={[styles.punchBtn, busy || !locReady ? styles.punchBtnDisabled : null]}
-              onPress={capture}
-              disabled={busy || !locReady}
-              activeOpacity={0.85}
-            >
-              <LinearGradient
-                colors={!locReady ? ['#9CA3AF', '#9CA3AF'] : punchedIn ? ['#EF4444', '#B91C1C'] : ['#22C55E', '#15803D']}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                style={styles.punchGrad}
-              >
-                {busy && !pendingPhoto ? <ActivityIndicator color="#fff" /> : (
-                  <>
-                    <MaterialIcons name={locReady ? 'photo-camera' : 'location-searching'} size={21} color="#fff" />
-                    <Text style={styles.punchText}>
-                      {!locReady ? 'WAITING FOR LOCATION…' : punchedIn ? 'PUNCH OUT' : 'PUNCH IN'}
-                    </Text>
-                  </>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
+            {(() => {
+              const locating = !locReady && !locError;      // still trying, no error yet
+              const disabled = busy || locating;            // block only while capturing or first fix pending
+              const colors = locError
+                ? ['#F59E0B', '#D97706']                     // amber = retry
+                : locating
+                  ? ['#9CA3AF', '#9CA3AF']                   // grey = waiting
+                  : punchedIn ? ['#EF4444', '#B91C1C'] : ['#22C55E', '#15803D'];
+              const icon = locError ? 'refresh' : locating ? 'location-searching' : 'photo-camera';
+              const label = locError ? 'RETRY LOCATION' : locating ? 'LOCATING…' : punchedIn ? 'PUNCH OUT' : 'PUNCH IN';
+              return (
+                <TouchableOpacity
+                  style={[styles.punchBtn, disabled ? styles.punchBtnDisabled : null]}
+                  onPress={onPunchPress}
+                  disabled={disabled}
+                  activeOpacity={0.85}
+                >
+                  <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.punchGrad}>
+                    {busy && !pendingPhoto ? <ActivityIndicator color="#fff" /> : (
+                      <>
+                        <MaterialIcons name={icon} size={21} color="#fff" />
+                        <Text style={styles.punchText}>{label}</Text>
+                      </>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+              );
+            })()}
           </>
         )}
 
@@ -436,20 +539,23 @@ export default function PunchScreen({ navigation }) {
             </View>
             <Text style={styles.mTitle}>Location Required</Text>
             <Text style={[styles.mSub, { textAlign: 'center', marginBottom: 18 }]}>
-              Punch panna location capture aaganum.{'\n'}GPS on pannitu open area-la try pannunga.
+              {locError || 'Punch needs your location. Turn on GPS and try in an open area.'}
             </Text>
             <View style={styles.mBtnRow}>
               <TouchableOpacity style={styles.outlineBtn} onPress={() => setLocModal(false)}>
                 <Text style={styles.outlineText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.85}
-                onPress={() => { setLocModal(false); prefetchLocation(); }}>
+                onPress={() => { setLocModal(false); setLocError(null); prefetchLocation(); }}>
                 <LinearGradient colors={['#1E40AF', '#312E81']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.fillBtn}>
                   <MaterialIcons name="my-location" size={17} color="#fff" />
                   <Text style={styles.fillText}>Retry</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
+            <TouchableOpacity onPress={() => { setLocModal(false); Linking.openSettings(); }} style={{ marginTop: 12 }}>
+              <Text style={styles.permSettingsLink}>Open device Settings</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -538,8 +644,9 @@ const styles = StyleSheet.create({
   camWrap: { width: 190, height: 190, borderRadius: 95, overflow: 'hidden', backgroundColor: '#E5E7EB' },
 
   locChip: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, elevation: 1, maxWidth: '92%' },
+  locChipError: { backgroundColor: '#FEF2F2' },
   locDot: { width: 7, height: 7, borderRadius: 4 },
-  locChipText: { fontSize: 11.5, color: '#374151', fontWeight: '600' },
+  locChipText: { flexShrink: 1, fontSize: 11.5, color: '#374151', fontWeight: '600' },
 
   punchBtn: { marginTop: 14, borderRadius: 27, elevation: 3, width: '78%' },
   punchBtnDisabled: { elevation: 0 },
@@ -552,6 +659,10 @@ const styles = StyleSheet.create({
   permText: { color: '#6B7280', fontSize: 12.5, textAlign: 'center', marginTop: 6, lineHeight: 18 },
   permBtn: { flexDirection: 'row', gap: 7, alignItems: 'center', marginTop: 16, backgroundColor: INDIGO, borderRadius: 13, paddingHorizontal: 22, paddingVertical: 12, elevation: 2 },
   permBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  permStatusRow: { flexDirection: 'row', gap: 18, marginTop: 14 },
+  permStatusItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  permStatusText: { fontSize: 12.5, fontWeight: '700', color: '#374151' },
+  permSettingsLink: { fontSize: 12, color: INDIGO, fontWeight: '700', textDecorationLine: 'underline' },
 
   hoursPill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#EEF2FF', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, marginTop: 18 },
   hoursText: { color: INDIGO, fontWeight: '700', fontSize: 13 },

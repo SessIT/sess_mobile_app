@@ -231,6 +231,7 @@ export default function Users() {
 function CreateUserModal({ open, roles, onClose, onCreated }) {
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [roleName, setRoleName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -241,6 +242,7 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
     if (open) {
       setFullName('');
       setUsername('');
+      setPhone('');
       setPassword('');
       setRoleName(roles[0] || '');
       setError('');
@@ -249,13 +251,18 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
   }, [open, roles]);
 
   const canSubmit =
-    fullName.trim() && username.trim() && password.length >= 6 && roleName && !busy;
+    fullName.trim() && username.trim() && password.length >= 6 && roleName &&
+    (!phone || phone.length === 10) && !busy;
 
   const submit = async (e) => {
     e?.preventDefault();
     // Client-side validation before hitting the API.
     if (!fullName.trim() || !username.trim() || !roleName) {
       setError('All fields are required.');
+      return;
+    }
+    if (phone && phone.length !== 10) {
+      setError('Phone must be a 10-digit mobile number.');
       return;
     }
     if (password.length < 6) {
@@ -268,12 +275,13 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
       const created = await apiPost('/users', {
         username: username.trim(),
         fullName: fullName.trim(),
+        phone: phone.trim(),
         password,
         roleName,
       });
       onCreated(created);
     } catch (err) {
-      // 400 (bad input) / 409 (username exists) messages surface here.
+      // 400 (bad input) / 409 (username exists / phone in use) messages surface here.
       setError(err.message || 'Could not create user.');
     } finally {
       setBusy(false);
@@ -320,6 +328,16 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder="ilamparithisde"
+            autoComplete="off"
+          />
+        </Field>
+
+        <Field label="Phone" hint="10-digit mobile used for OTP login on the employee app.">
+          <Input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+            placeholder="9876543210"
+            inputMode="numeric"
             autoComplete="off"
           />
         </Field>

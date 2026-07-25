@@ -167,6 +167,21 @@ export const IconUpload = (p) => (
   </Svg>
 );
 
+export const IconDownload = (p) => (
+  <Svg {...p}>
+    <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+    <path d="M12 3v12M7 10l5 5 5-5" />
+  </Svg>
+);
+
+export const IconLeave = (p) => (
+  <Svg {...p}>
+    <rect x="3" y="4.5" width="18" height="16" rx="2.5" />
+    <path d="M3 9h18M8 3v3M16 3v3" />
+    <path d="m9 14 2 2 4-4" />
+  </Svg>
+);
+
 export const IconEdit = (p) => (
   <Svg {...p}>
     <path d="M12 20h9" />

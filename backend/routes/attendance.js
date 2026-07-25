@@ -148,6 +148,42 @@ function dayWindowIST(dateStr) {
   return { start, end: new Date(start.getTime() + 24 * 3600 * 1000) };
 }
 
+const dateOnlyUTC = (ymd) => new Date(ymd + 'T00:00:00.000Z');
+
+// Approved-leave day sets for a month: Map(userId -> Set('YYYY-MM-DD')) of the
+// non-Sunday days each user is on approved leave (clipped to the month).
+// Used to render leave days on the calendar and to adjust required hours.
+async function approvedLeaveSets(month, userIds) {
+  const [y, m] = month.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const monthStart = `${month}-01`;
+  const monthEnd = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+  const where = {
+    status: 'approved',
+    startDate: { lte: dateOnlyUTC(monthEnd) },
+    endDate: { gte: dateOnlyUTC(monthStart) },
+  };
+  if (Array.isArray(userIds)) where.userId = { in: userIds };
+  const leaves = await prisma.leaveRequest.findMany({
+    where, select: { userId: true, startDate: true, endDate: true },
+  });
+  const ymdOf = (d) => new Date(d).toISOString().slice(0, 10);
+  const sets = new Map();
+  for (const lv of leaves) {
+    let set = sets.get(lv.userId);
+    if (!set) { set = new Set(); sets.set(lv.userId, set); }
+    const ls = ymdOf(lv.startDate), le = ymdOf(lv.endDate);
+    const from = ls < monthStart ? monthStart : ls;
+    const to = le > monthEnd ? monthEnd : le;
+    for (let t = Date.parse(from + 'T00:00:00Z'); t <= Date.parse(to + 'T00:00:00Z'); t += 86400000) {
+      const dt = new Date(t);
+      if (dt.getUTCDay() === 0) continue; // Sunday is a weekly off, not leave
+      set.add(dt.toISOString().slice(0, 10));
+    }
+  }
+  return sets;
+}
+
 // GET /api/attendance/admin/day?date=YYYY-MM-DD — that day, ALL employees
 router.get('/admin/day', requireRole(ADMIN), async (req, res) => {
   try {
@@ -213,6 +249,7 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
 
     if (!userId) {
       const users = await prisma.user.findMany({ where: { isActive: true }, select: { id: true, username: true, fullName: true } });
+      const leaveSets = await approvedLeaveSets(month, users.map(u => u.id));
       const map = {};
       for (const u of users) map[u.id] = { userId: u.id, username: u.username, fullName: u.fullName, days: new Set(), late: 0, hours: 0 };
       for (const s of sessions) {
@@ -225,19 +262,29 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
         }
         r.hours += s.workingHours || 0;
       }
-      const summary = Object.values(map).map(r => ({
-        userId: r.userId, username: r.username, fullName: r.fullName,
-        // Present = on-time days only. Late days are a separate, mutually-exclusive
-        // bucket so that present + late + absent === workingDaysSoFar.
-        // (r.days.size = every day attended; r.late = those that were late.)
-        present: Math.max(r.days.size - r.late, 0),
-        absent: Math.max(workingDaysSoFar - r.days.size, 0),
-        late: r.late,
-        hours: Math.round(r.hours * 100) / 100,
-      })).sort((a, b) => (a.fullName || a.username).localeCompare(b.fullName || b.username));
+      const summary = Object.values(map).map(r => {
+        // Approved-leave days that fell on a working day up to today and weren't
+        // actually worked (a punch on a leave day counts as present, not leave).
+        let leave = 0;
+        for (const ymd of (leaveSets.get(r.userId) || [])) {
+          if (ymd <= todayStr && !r.days.has(ymd)) leave++;
+        }
+        // Present = on-time days; late is its own bucket; leave is paid time off.
+        // present + late + leave + absent === workingDaysSoFar.
+        const required = Math.max(workingDaysSoFar - leave, 0) * HOURS_PER_DAY;
+        return {
+          userId: r.userId, username: r.username, fullName: r.fullName,
+          present: Math.max(r.days.size - r.late, 0),
+          leave,
+          absent: Math.max(workingDaysSoFar - r.days.size - leave, 0),
+          late: r.late,
+          hours: Math.round(r.hours * 100) / 100,
+          requiredHours: required, // hours expected to be physically worked (leave excluded)
+        };
+      }).sort((a, b) => (a.fullName || a.username).localeCompare(b.fullName || b.username));
       return res.json({
         month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,
-        requiredHours: workingDaysSoFar * HOURS_PER_DAY, // target for the period
+        requiredHours: workingDaysSoFar * HOURS_PER_DAY, // gross target (before leave)
         summary,
       });
     }
@@ -251,10 +298,17 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       const site = (s.siteName || 'SESS').trim();
       if (!d.sites.includes(site)) d.sites.push(site);
     }
+    const leaveSet = (await approvedLeaveSets(month, [userId])).get(userId) || new Set();
     const days = dayMeta.map(dm => {
       const rec = byDay[dm.ymd];
-      const status = dm.isFuture ? (dm.isWeekoff ? 'weekoff' : 'future')
-        : rec ? 'present' : dm.isWeekoff ? 'weekoff' : 'absent';
+      const isLeave = leaveSet.has(dm.ymd);
+      // Precedence: a real punch wins; Sundays are week-off; otherwise approved
+      // leave (incl. upcoming) shows as paid leave before falling back to future/absent.
+      const status = rec ? 'present'
+        : dm.isWeekoff ? 'weekoff'
+        : isLeave ? 'leave'
+        : dm.isFuture ? 'future'
+        : 'absent';
       const lateLevel = rec ? lateLevelOf(rec.firstIn) : null;
       return {
         date: dm.ymd, weekday: dm.weekday, status,
@@ -264,17 +318,20 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
         late: isLateLevel(lateLevel), lateLevel, sites: rec?.sites || [],
       };
     });
+    const leaveSoFar = days.filter(d => d.status === 'leave' && d.date <= todayStr).length;
     const stats = {
-      // Present excludes late days so present + late + absent === working days,
-      // matching the all-users summary and the mobile /my-month view.
+      // present + late + leave + absent === workingDaysSoFar.
       present: days.filter(d => d.status === 'present' && !d.late).length,
+      leave: leaveSoFar,
       absent: days.filter(d => d.status === 'absent').length,
       late: days.filter(d => d.late).length,
       hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
     };
     res.json({
       month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,
-      requiredHours: workingDaysSoFar * HOURS_PER_DAY,
+      // Required = hours the employee was expected to physically work (leave excluded).
+      requiredHours: Math.max(workingDaysSoFar - leaveSoFar, 0) * HOURS_PER_DAY,
+      grossRequiredHours: workingDaysSoFar * HOURS_PER_DAY,
       stats, days,
     });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
@@ -326,14 +383,22 @@ router.get('/my-month', async (req, res) => {
       if (!d.sites.includes(site)) d.sites.push(site);
     }
 
+    let workingDaysSoFar = 0;
+    const leaveSet = (await approvedLeaveSets(month, [req.user.sub])).get(req.user.sub) || new Set();
     const days = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const ymd = `${month}-${String(d).padStart(2, '0')}`;
       const wd = new Date(ymd + 'T00:00:00+05:30').getDay();
       const isWeekoff = wd === 0; // Sunday is the weekly off
       const isFuture = ymd > todayStr;
+      if (!isWeekoff && !isFuture) workingDaysSoFar++;
       const rec = byDay[ymd];
-      const status = isFuture ? 'future' : rec ? 'present' : isWeekoff ? 'weekoff' : 'absent';
+      const isLeave = leaveSet.has(ymd);
+      const status = rec ? 'present'
+        : isWeekoff ? 'weekoff'
+        : isLeave ? 'leave'
+        : isFuture ? 'future'
+        : 'absent';
       const lateLevel = rec ? lateLevelOf(rec.firstIn) : null;
       days.push({
         date: ymd, weekday: wd, status,
@@ -343,14 +408,21 @@ router.get('/my-month', async (req, res) => {
         late: isLateLevel(lateLevel), lateLevel, sites: rec?.sites || [],
       });
     }
+    const leaveSoFar = days.filter(d => d.status === 'leave' && d.date <= todayStr).length;
     const stats = {
       present: days.filter(d => d.status === 'present' && !d.late).length, // late days excluded
       late: days.filter(d => d.late).length,
+      leave: leaveSoFar,
       absent: days.filter(d => d.status === 'absent').length,
       weekoff: days.filter(d => d.status === 'weekoff').length,
       hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
     };
-    res.json({ month, stats, days });
+    res.json({
+      month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,
+      requiredHours: Math.max(workingDaysSoFar - leaveSoFar, 0) * HOURS_PER_DAY,
+      grossRequiredHours: workingDaysSoFar * HOURS_PER_DAY,
+      stats, days,
+    });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 

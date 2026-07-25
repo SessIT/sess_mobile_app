@@ -16,6 +16,7 @@ const GREEN = '#16A34A';
 const RED = '#DC2626';
 const AMBER = '#D97706';
 const GREY = '#6B7280';
+const LEAVE = '#7C3AED'; // paid leave (purple)
 const LIGHT_GREY = '#F3F4F6';
 const BASE = API_URL.replace('/api', '');
 
@@ -74,7 +75,8 @@ export default function MyAttendanceScreen({ navigation }) {
     return unsub;
   }, [navigation, loadMonth, loadDay]);
 
-  const stats = monthData?.stats || { present: 0, late: 0, absent: 0, weekoff: 0, hours: 0 };
+  const stats = monthData?.stats || { present: 0, late: 0, leave: 0, absent: 0, weekoff: 0, hours: 0 };
+  const requiredHrs = monthData?.requiredHours ?? 0;
 
   const markedDates = useMemo(() => {
     const marks = {};
@@ -83,6 +85,7 @@ export default function MyAttendanceScreen({ navigation }) {
         if (d.status === 'future') continue;
         let bg = null, txt = '#fff';
         if (d.status === 'present') bg = d.lateLevel === 'late' ? AMBER : GREEN;
+        else if (d.status === 'leave') bg = LEAVE;
         else if (d.status === 'absent') bg = RED;
         else if (d.status === 'weekoff') { bg = '#E5E7EB'; txt = GREY; }
         if (bg) {
@@ -222,7 +225,7 @@ export default function MyAttendanceScreen({ navigation }) {
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>My Attendance</Text>
-            <Text style={styles.subTitle}>Total worked this month: {fmtH(stats.hours)}</Text>
+            <Text style={styles.subTitle}>Effort: {fmtH(stats.hours)} / {fmtH(requiredHrs)} required</Text>
           </View>
           <TouchableOpacity style={styles.moreBtn}>
             <MaterialIcons name="more-vert" size={20} color="#fff" />
@@ -246,8 +249,8 @@ export default function MyAttendanceScreen({ navigation }) {
         <View style={styles.countGrid}>
           <CountBox label="Present" value={stats.present} color={GREEN} icon="check-circle" />
           <CountBox label="Late" value={stats.late} color={AMBER} icon="access-time" />
+          <CountBox label="Leave" value={stats.leave ?? 0} color={LEAVE} icon="beach-access" />
           <CountBox label="Absent" value={stats.absent} color={RED} icon="cancel" />
-          <CountBox label="Week Off" value={stats.weekoff} color={GREY} icon="weekend" />
         </View>
 
         <View style={styles.statDivider}>
@@ -288,6 +291,7 @@ export default function MyAttendanceScreen({ navigation }) {
             {[
               ['Present', GREEN, '✓'],
               ['Late', AMBER, '⏰'],
+              ['Leave', LEAVE, '🏖️'],
               ['Absent', RED, '✗'],
               ['Week Off', '#C4C4C4', '⊙']
             ].map(([l, c, icon]) => (
@@ -307,13 +311,15 @@ export default function MyAttendanceScreen({ navigation }) {
             </View>
             <Text style={styles.dateHeadText}>{prettyDate(date)}</Text>
             {dayStatus?.status && (
-              <View style={[styles.statusPill, 
-                { backgroundColor: dayStatus.status === 'present' ? GREEN : 
-                   dayStatus.status === 'absent' ? RED : 
+              <View style={[styles.statusPill,
+                { backgroundColor: dayStatus.status === 'present' ? GREEN :
+                   dayStatus.status === 'leave' ? LEAVE :
+                   dayStatus.status === 'absent' ? RED :
                    dayStatus.status === 'weekoff' ? GREY : '#C4C4C4' }
               ]}>
                 <Text style={styles.statusPillText}>
                   {dayStatus.status === 'present' ? 'Present' :
+                   dayStatus.status === 'leave' ? 'Paid Leave' :
                    dayStatus.status === 'absent' ? 'Absent' :
                    dayStatus.status === 'weekoff' ? 'Week Off' : 'Upcoming'}
                 </Text>
@@ -328,24 +334,26 @@ export default function MyAttendanceScreen({ navigation }) {
           ) : (
             <View style={styles.infoCard}>
               <LinearGradient
-                colors={['#FEF3C7', '#FDE68A']}
+                colors={dayStatus?.status === 'leave' ? ['#EDE9FE', '#DDD6FE'] : ['#FEF3C7', '#FDE68A']}
                 style={styles.infoIconWrap}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
               >
                 <MaterialIcons
-                  name={dayStatus?.status === 'weekoff' ? 'weekend' : dayStatus?.status === 'future' ? 'schedule' : 'person-off'}
+                  name={dayStatus?.status === 'leave' ? 'beach-access' : dayStatus?.status === 'weekoff' ? 'weekend' : dayStatus?.status === 'future' ? 'schedule' : 'person-off'}
                   size={32}
-                  color={dayStatus?.status === 'weekoff' ? GREY : dayStatus?.status === 'future' ? '#6B7280' : RED}
+                  color={dayStatus?.status === 'leave' ? LEAVE : dayStatus?.status === 'weekoff' ? GREY : dayStatus?.status === 'future' ? '#6B7280' : RED}
                 />
               </LinearGradient>
               <Text style={styles.infoTitle}>
-                {dayStatus?.status === 'weekoff' ? 'Week Off'
+                {dayStatus?.status === 'leave' ? 'Paid Leave'
+                  : dayStatus?.status === 'weekoff' ? 'Week Off'
                   : dayStatus?.status === 'future' ? 'Upcoming Date'
                   : 'Absent'}
               </Text>
               <Text style={styles.infoSub}>
-                {dayStatus?.status === 'weekoff' ? 'Enjoy your day off! 🎉'
+                {dayStatus?.status === 'leave' ? 'Approved paid leave — counted in your effort hours'
+                  : dayStatus?.status === 'weekoff' ? 'Enjoy your day off! 🎉'
                   : dayStatus?.status === 'future' ? 'Attendance will be recorded on this day'
                   : 'No attendance records found for this date'}
               </Text>
@@ -471,11 +479,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#F0F0F0',
   },
-  legendRow: { 
-    flexDirection: 'row', 
-    justifyContent: 'center', 
-    gap: 16, 
-    paddingVertical: 10, 
+  legendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 14,
+    paddingVertical: 10,
     borderTopWidth: 1, 
     borderTopColor: '#F3F4F6',
     marginTop: 4,

@@ -16,6 +16,7 @@ const GREEN = '#16A34A';
 const RED = '#DC2626';
 const AMBER = '#D97706';
 const GREY = '#9CA3AF';
+const LEAVE = '#7C3AED'; // paid leave (purple)
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const thisMonth = () => todayYMD().slice(0, 7);
@@ -36,6 +37,7 @@ const monthLabel = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const STATUS = {
   present: { label: 'Present', color: GREEN, bg: '#ECFDF5' },
+  leave: { label: 'Paid Leave', color: LEAVE, bg: '#EDE9FE' },
   absent: { label: 'Absent', color: RED, bg: '#FEE2E2' },
   weekoff: { label: 'Week Off', color: GREY, bg: '#F3F4F6' },
   future: { label: '—', color: '#D1D5DB', bg: '#FAFAFA' },
@@ -122,14 +124,14 @@ export default function TeamAttendanceScreen({ navigation }) {
           `Month:,${monthLabel(month)}`,
           `Working days (so far):,${data.workingDaysSoFar}`,
           `Required hours:,${data.requiredHours} (${data.hoursPerDay || 8}h/day)`, '',
-          'Name,Username,Present,Leave,Late,Required Hours,Worked Hours',
-          ...data.summary.map(r => [esc(r.fullName || r.username), r.username, r.present, r.absent, r.late, data.requiredHours, r.hours].join(',')),
+          'Name,Username,Present,Leave,Absent,Late,Required Hours,Worked Hours',
+          ...data.summary.map(r => [esc(r.fullName || r.username), r.username, r.present, r.leave ?? 0, r.absent, r.late, r.requiredHours ?? data.requiredHours, r.hours].join(',')),
         ];
       } else {
         fname = `attendance_${month}_${selected.username}.csv`;
         lines = [
           `Employee:,${esc(selected.fullName || selected.username)}`, `Month:,${monthLabel(month)}`,
-          `Present:,${data.stats.present},Leave:,${data.stats.absent},Late:,${data.stats.late}`,
+          `Present:,${data.stats.present},Leave:,${data.stats.leave ?? 0},Absent:,${data.stats.absent},Late:,${data.stats.late}`,
           `Required Hours:,${data.requiredHours},Worked Hours:,${data.stats.hours}`, '',
           'Date,Weekday,Status,First In,Last Out,Sessions,Hours,Late,Sites',
           ...data.days.map(d => [d.date, WD[d.weekday], STATUS[d.status].label,
@@ -349,11 +351,12 @@ export default function TeamAttendanceScreen({ navigation }) {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.name}>{r.fullName || r.username}</Text>
                     <View style={styles.gridRow}>
-                      <Text style={[styles.gridStat, { color: GREEN }]}>P: {r.present}</Text>
-                      <Text style={[styles.gridStat, { color: RED }]}>Lv: {r.absent}</Text>
-                      <Text style={[styles.gridStat, { color: AMBER }]}>L: {r.late}</Text>
-                      {/* Worked hours vs the period target: amber if short (usually leave), green if met. */}
-                      <Text style={[styles.gridStat, { color: r.hours < (data.requiredHours || 0) ? AMBER : GREEN }]}>
+                      <Text style={[styles.gridStat, { color: GREEN }]}>P {r.present}</Text>
+                      <Text style={[styles.gridStat, { color: LEAVE }]}>Lv {r.leave ?? 0}</Text>
+                      <Text style={[styles.gridStat, { color: RED }]}>A {r.absent}</Text>
+                      <Text style={[styles.gridStat, { color: AMBER }]}>L {r.late}</Text>
+                      {/* Worked hours vs the (leave-adjusted) target: amber if short, green if met. */}
+                      <Text style={[styles.gridStat, { color: r.hours < (r.requiredHours ?? 0) ? AMBER : GREEN }]}>
                         {fmtH(r.hours)}
                       </Text>
                     </View>
@@ -368,8 +371,8 @@ export default function TeamAttendanceScreen({ navigation }) {
           {mode === 'month' && data?.days && selected && (
             <>
               <View style={styles.statCard}>
-                {[['Present', data.stats.present, GREEN], ['Leave', data.stats.absent, RED],
-                  ['Late', data.stats.late, AMBER], ['Worked', fmtH(data.stats.hours), INDIGO]].map(([l, v, c]) => (
+                {[['Present', data.stats.present, GREEN], ['Leave', data.stats.leave ?? 0, LEAVE],
+                  ['Absent', data.stats.absent, RED], ['Late', data.stats.late, AMBER]].map(([l, v, c]) => (
                   <View key={l} style={styles.statBox}>
                     <Text style={[styles.statNum, { color: c }]}>{v}</Text>
                     <Text style={styles.statLabel}>{l}</Text>
@@ -644,7 +647,7 @@ const styles = StyleSheet.create({
   absentText: { color: RED, fontSize: 12, fontWeight: '700' },
 
   wdText: { fontSize: 11.5, color: '#9CA3AF', fontWeight: '600', marginBottom: 10 },
-  gridRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  gridRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4 },
   gridStat: { fontSize: 12, fontWeight: '800' },
 
   statCard: { flexDirection: 'row', backgroundColor: '#fff', borderRadius: 16, paddingVertical: 12, marginBottom: 12, elevation: 1 },

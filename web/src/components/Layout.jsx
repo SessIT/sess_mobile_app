@@ -8,6 +8,7 @@ import {
   IconCalendar,
   IconMap,
   IconGift,
+  IconLeave,
   IconLogOut,
   IconChevronLeft,
 } from './icons';
@@ -18,6 +19,7 @@ const NAV = [
   { to: '/attendance', label: 'Team Attendance', icon: IconCalendar },
   { to: '/trail', label: 'Team Trail', icon: IconMap },
   { to: '/holidays', label: 'Holidays', icon: IconGift },
+  { to: '/leaves', label: 'Leave Management', icon: IconLeave },
 ];
 
 const COLLAPSE_KEY = 'sess_sidebar_collapsed';
