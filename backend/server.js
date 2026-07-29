@@ -20,6 +20,10 @@ app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/location', require('./routes/location'));
 app.use('/api/holidays', require('./routes/holidays'));
 app.use('/api/leaves', require('./routes/leaves'));
+app.use('/api/sites', require('./routes/sites'));
+app.use('/api/geo', require('./routes/geo'));
+app.use('/api/reports', require('./routes/reports'));
+app.use('/api/chat', require('./routes/chat'));
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', () => console.log('API running on http://localhost:' + PORT));

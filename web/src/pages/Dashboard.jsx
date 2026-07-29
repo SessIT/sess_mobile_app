@@ -2,6 +2,7 @@
 // Pulls GET /attendance/admin/day and lets the admin scrub the date from the header.
 
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiGet } from '../lib/api';
 import { fmtTime, fmtHours, todayIST } from '../lib/format';
 import {
@@ -23,6 +24,106 @@ import {
   IconCalendar,
   IconSparkles,
 } from '../components/icons';
+
+/* ---------------------------------------------- Celebrations (premium strip) */
+const initialsOf = (n) =>
+  (n || 'U').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+
+const whenLabel = (d) =>
+  d === 0 ? 'Today 🎉' : d === 1 ? 'Tomorrow' : `in ${d} days`;
+
+// Gradient strip of upcoming birthdays & work anniversaries (next 30 days).
+function CelebrationsStrip() {
+  const navigate = useNavigate();
+  const [events, setEvents] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    apiGet('/reports/upcoming?days=30')
+      .then((r) => alive && setEvents(r.events || []))
+      .catch(() => { if (alive) { setFailed(true); setEvents([]); } }); // never blocks the dashboard
+    return () => { alive = false; };
+  }, []);
+
+  if (!events || failed) return null; // loading, or old backend without the endpoint
+
+  // Empty state — tell the admin what feeds this strip instead of hiding it.
+  if (events.length === 0) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-4">
+        <span className="text-xl">🎂</span>
+        <div>
+          <p className="text-sm font-semibold text-slate-700">No celebrations in the next 30 days</p>
+          <p className="text-xs text-slate-400">
+            Birthdays and work anniversaries appear here automatically — add each employee's
+            <b> Date of birth</b> and <b>Date of joining</b> in User Management → Edit.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-brand-900 via-brand-800 to-[#312E81] p-5 shadow-lg">
+      {/* soft glow decorations */}
+      <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-brand-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-fuchsia-400/10 blur-3xl" />
+
+      <div className="relative z-10 mb-3 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-brand-100">
+          <IconSparkles className="h-4 w-4 text-amber-300" />
+          Upcoming celebrations
+        </h2>
+        <span className="text-[11px] font-medium text-brand-300/80">next 30 days</span>
+      </div>
+
+      <div className="relative z-10 flex gap-3 overflow-x-auto pb-1 [scrollbar-width:thin]">
+        {events.map((e) => {
+          const isToday = e.daysUntil === 0;
+          return (
+            <button
+              key={`${e.type}-${e.id}`}
+              type="button"
+              onClick={() => navigate(`/chat?to=${e.id}&wish=${e.type}`)}
+              title="Send your wishes 💬"
+              className={`flex min-w-[15rem] cursor-pointer items-center gap-3 rounded-xl border p-3 text-left backdrop-blur transition hover:scale-[1.02] hover:bg-white/20 ${
+                isToday
+                  ? 'border-amber-300/60 bg-amber-400/15 shadow-[0_0_20px_rgba(251,191,36,0.15)]'
+                  : 'border-white/10 bg-white/10'
+              }`}
+            >
+              <div className="relative">
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-extrabold text-white ring-2 ring-white/20">
+                  {initialsOf(e.fullName || e.username)}
+                </span>
+                <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white text-[13px] shadow">
+                  {e.type === 'birthday' ? '🎂' : '🏆'}
+                </span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-white">{e.fullName || e.username}</p>
+                <p className="truncate text-[11px] text-brand-200/90">
+                  {e.type === 'birthday'
+                    ? 'Birthday'
+                    : `${e.years} year${e.years === 1 ? '' : 's'} with SESS`}
+                  {e.designation ? ` · ${e.designation}` : ''}
+                </p>
+                <span
+                  className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    isToday ? 'animate-pulse bg-amber-300 text-amber-900' : 'bg-white/15 text-brand-100'
+                  }`}
+                >
+                  {whenLabel(e.daysUntil)}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // Map a session's lateLevel into a Badge tone + label.
 function lateBadge(level) {
@@ -101,6 +202,11 @@ export default function Dashboard() {
           />
         }
       />
+
+      {/* Celebrations — independent of the attendance date being scrubbed */}
+      <div className="mb-6">
+        <CelebrationsStrip />
+      </div>
 
       {loading ? (
         <Loading label="Loading attendance…" />

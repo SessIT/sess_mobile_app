@@ -167,6 +167,19 @@ export const IconUpload = (p) => (
   </Svg>
 );
 
+export const IconChat = (p) => (
+  <Svg {...p}>
+    <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.6 0-3.1-.4-4.4-1.2L3 20l1.2-5.1A8.5 8.5 0 1 1 21 11.5Z" />
+    <path d="M8 10.5h8M8 13.5h5" />
+  </Svg>
+);
+
+export const IconChart = (p) => (
+  <Svg {...p}>
+    <path d="M4 20V10M10 20V4M16 20v-7M21 20H3" />
+  </Svg>
+);
+
 export const IconDownload = (p) => (
   <Svg {...p}>
     <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />

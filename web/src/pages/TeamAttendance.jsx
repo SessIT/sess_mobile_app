@@ -45,6 +45,7 @@ import {
   IconTrash,
   IconPlus,
   IconLeave,
+  IconDownload,
 } from '../components/icons';
 
 /* Time helpers for the manual-entry editor — everything is IST (+05:30). */
@@ -336,6 +337,33 @@ function MonthTab() {
     };
   }, [month]);
 
+  // Download the month summary as CSV (mirrors the mobile export columns).
+  const exportCsv = () => {
+    const rows = data?.summary || [];
+    if (!rows.length) return;
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [
+      `Team Attendance:,${month}`,
+      `Working days so far:,${data.workingDaysSoFar}`,
+      `Required hours:,${data.requiredHours} (${data.hoursPerDay || 8}h/day)`,
+      '',
+      'Name,Username,Present,Leave,Absent,Late,Required Hours,Worked Hours',
+      ...rows.map((r) => [
+        esc(r.fullName || r.username), r.username, r.present, r.leave ?? 0,
+        r.absent, r.late, r.requiredHours ?? data.requiredHours, r.hours,
+      ].join(',')),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `team_attendance_${month}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -349,16 +377,24 @@ function MonthTab() {
           />
         </label>
         {data && !selected && (
-          <p className="pb-2 text-sm text-slate-500">
-            <span className="font-semibold text-slate-700">{data.workingDaysSoFar}</span> working days so far
-            {data.requiredHours != null && (
-              <> · <span className="font-semibold text-slate-700">{fmtHours(data.requiredHours)}</span> required
-                {data.hoursPerDay ? ` (${data.hoursPerDay} h/day)` : ''}</>
+          <div className="flex items-end gap-4">
+            <p className="pb-2 text-sm text-slate-500">
+              <span className="font-semibold text-slate-700">{data.workingDaysSoFar}</span> working days so far
+              {data.requiredHours != null && (
+                <> · <span className="font-semibold text-slate-700">{fmtHours(data.requiredHours)}</span> required
+                  {data.hoursPerDay ? ` (${data.hoursPerDay} h/day)` : ''}</>
+              )}
+              {typeof data.summary?.length === 'number' && (
+                <> · {data.summary.length} employees</>
+              )}
+            </p>
+            {(data.summary || []).length > 0 && (
+              <Button variant="secondary" onClick={exportCsv}>
+                <IconDownload className="h-4 w-4" />
+                Export CSV
+              </Button>
             )}
-            {typeof data.summary?.length === 'number' && (
-              <> · {data.summary.length} employees</>
-            )}
-          </p>
+          </div>
         )}
       </div>
 
@@ -908,6 +944,135 @@ function DayManager({ ctx, onClose, onChanged }) {
   );
 }
 
+/* ====================================================== Corrections tab */
+// Employee-raised attendance corrections (missed punches). Approving applies
+// the fix to that day's sessions automatically (server-side).
+function CorrectionsTab() {
+  const [status, setStatus] = useState('pending');
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    apiGet(`/attendance/admin/corrections${status ? `?status=${status}` : ''}`)
+      .then((r) => setRequests(r.requests || []))
+      .catch((e) => setError(e.message || 'Failed to load corrections'))
+      .finally(() => setLoading(false));
+  }, [status]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const decide = async (r, decision) => {
+    let reviewNote = '';
+    if (decision === 'rejected') reviewNote = window.prompt('Reason for rejection (optional):', '') ?? '';
+    setBusyId(r.id);
+    try {
+      await apiPatch(`/attendance/admin/corrections/${r.id}`, { status: decision, reviewNote });
+      load();
+    } catch (e) {
+      alert(e.message || 'Could not update the request');
+    } finally {
+      setBusyId((prev) => (prev === r.id ? null : prev));
+    }
+  };
+
+  const STATUS_TONE = { pending: 'amber', approved: 'green', rejected: 'red', cancelled: 'gray' };
+  const FILTERS = ['pending', 'approved', 'rejected', 'all'];
+
+  return (
+    <div className="space-y-4">
+      <div className="inline-flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+        {FILTERS.map((f) => (
+          <button
+            key={f}
+            onClick={() => setStatus(f === 'all' ? '' : f)}
+            className={cx(
+              'rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition',
+              (status === f || (f === 'all' && status === ''))
+                ? 'bg-white text-brand-800 shadow-sm ring-1 ring-slate-200/80'
+                : 'text-slate-500 hover:text-slate-700'
+            )}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+
+      {error && <ErrorNote>{error}</ErrorNote>}
+
+      <Card>
+        {loading ? (
+          <CardBody><Loading label="Loading correction requests…" /></CardBody>
+        ) : requests.length === 0 ? (
+          <CardBody>
+            <EmptyState title="No correction requests" hint="Employees raise these from My Attendance when a punch was missed." icon={<IconInbox />} />
+          </CardBody>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
+                  <th className="px-4 py-3 font-semibold">Employee</th>
+                  <th className="px-4 py-3 font-semibold">Date</th>
+                  <th className="px-4 py-3 font-semibold">Requested In</th>
+                  <th className="px-4 py-3 font-semibold">Requested Out</th>
+                  <th className="px-4 py-3 font-semibold">Reason</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 text-right font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {requests.map((r) => {
+                  const busy = busyId === r.id;
+                  return (
+                    <tr key={r.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-slate-800">{r.user?.fullName || r.user?.username}</div>
+                        <div className="text-xs text-slate-400">@{r.user?.username}</div>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">{fmtDate(r.date)}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-700">{r.requestedIn ? fmtTime(r.requestedIn) : '—'}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-700">{r.requestedOut ? fmtTime(r.requestedOut) : '—'}</td>
+                      <td className="max-w-[16rem] px-4 py-3 text-slate-500"><span className="line-clamp-2">{r.reason}</span></td>
+                      <td className="px-4 py-3">
+                        <Badge tone={STATUS_TONE[r.status] || 'gray'}>{r.status}</Badge>
+                        {r.status === 'rejected' && r.reviewNote && (
+                          <p className="mt-1 max-w-[12rem] text-xs text-slate-400">{r.reviewNote}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {r.status === 'pending' ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <Button size="sm" variant="success" disabled={busy} onClick={() => decide(r, 'approved')}>
+                              {busy ? <Spinner className="h-4 w-4 text-current" /> : <IconCheckCircle className="h-4 w-4" />}
+                              Approve
+                            </Button>
+                            <Button size="sm" variant="danger" disabled={busy} onClick={() => decide(r, 'rejected')}>
+                              <IconBan className="h-4 w-4" />
+                              Reject
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400">
+                            {r.reviewedBy ? `by ${r.reviewedBy.fullName || r.reviewedBy.username}` : '—'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 /* =============================================================== Page root */
 
 export default function TeamAttendance() {
@@ -930,6 +1095,9 @@ export default function TeamAttendance() {
       <button type="button" className={segBtn('day')} onClick={() => setTab('day')}>
         Day View
       </button>
+      <button type="button" className={segBtn('corrections')} onClick={() => setTab('corrections')}>
+        Corrections
+      </button>
     </div>
   );
 
@@ -940,7 +1108,7 @@ export default function TeamAttendance() {
         subtitle="Review monthly roll-ups and daily punch activity across the team."
         actions={segmented}
       />
-      {tab === 'month' ? <MonthTab /> : <DayTab />}
+      {tab === 'month' ? <MonthTab /> : tab === 'day' ? <DayTab /> : <CorrectionsTab />}
     </div>
   );
 }

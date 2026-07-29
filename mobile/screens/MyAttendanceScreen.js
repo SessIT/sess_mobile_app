@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Image, RefreshControl, Dimensions,
+  Modal, TextInput, Alert,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -42,6 +43,10 @@ const lateLevelOf = (firstIn) => {
 };
 const isLateLevel = (lvl) => lvl === 'grace' || lvl === 'late';
 
+/* Correction-request helpers: "HH:MM" (24h, IST) -> ISO instant on a date. */
+const HM_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
+const hmToIso = (ymd, hm) => new Date(`${ymd}T${hm}:00+05:30`).toISOString();
+
 export default function MyAttendanceScreen({ navigation }) {
   const [month, setMonth] = useState(thisMonth());
   const [date, setDate] = useState(todayYMD());
@@ -50,6 +55,21 @@ export default function MyAttendanceScreen({ navigation }) {
   const [monthLoading, setMonthLoading] = useState(true);
   const [dayLoading, setDayLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Attendance correction requests (raise for a missed punch)
+  const [corrections, setCorrections] = useState([]);
+  const [corrModal, setCorrModal] = useState(false);
+  const [corrIn, setCorrIn] = useState('');
+  const [corrOut, setCorrOut] = useState('');
+  const [corrReason, setCorrReason] = useState('');
+  const [corrBusy, setCorrBusy] = useState(false);
+
+  const loadCorrections = useCallback(async () => {
+    try {
+      const res = await api('/attendance/corrections/my');
+      setCorrections(res.requests || []);
+    } catch { setCorrections([]); }
+  }, []);
 
   const loadMonth = useCallback(async () => {
     setMonthLoading(true);
@@ -71,9 +91,48 @@ export default function MyAttendanceScreen({ navigation }) {
   useEffect(() => { loadDay(); }, [loadDay]);
 
   useEffect(() => {
-    const unsub = navigation.addListener('focus', () => { loadMonth(); loadDay(); });
+    const unsub = navigation.addListener('focus', () => { loadMonth(); loadDay(); loadCorrections(); });
     return unsub;
-  }, [navigation, loadMonth, loadDay]);
+  }, [navigation, loadMonth, loadDay, loadCorrections]);
+
+  useEffect(() => { loadCorrections(); }, [loadCorrections]);
+
+  // Correction already raised for the selected date?
+  const dateCorrection = corrections.find(
+    (c) => String(c.date).slice(0, 10) === date && (c.status === 'pending' || c.status === 'approved')
+  );
+
+  const openCorrection = () => {
+    setCorrIn('');
+    setCorrOut('');
+    setCorrReason('');
+    setCorrBusy(false);
+    setCorrModal(true);
+  };
+
+  const submitCorrection = async () => {
+    if (corrIn && !HM_RE.test(corrIn)) { Alert.alert('Invalid time', 'Punch-in must be HH:MM (24h), e.g. 09:30'); return; }
+    if (corrOut && !HM_RE.test(corrOut)) { Alert.alert('Invalid time', 'Punch-out must be HH:MM (24h), e.g. 18:00'); return; }
+    if (!corrIn && !corrOut) { Alert.alert('Missing time', 'Enter the correct punch-in and/or punch-out time.'); return; }
+    if (corrIn && corrOut && corrOut <= corrIn) { Alert.alert('Invalid time', 'Punch-out must be after punch-in.'); return; }
+    if (!corrReason.trim()) { Alert.alert('Reason required', 'Please explain what went wrong (e.g. forgot to punch out).'); return; }
+    setCorrBusy(true);
+    try {
+      await api('/attendance/corrections', {
+        method: 'POST',
+        body: JSON.stringify({
+          date,
+          requestedIn: corrIn ? hmToIso(date, corrIn) : null,
+          requestedOut: corrOut ? hmToIso(date, corrOut) : null,
+          reason: corrReason.trim(),
+        }),
+      });
+      setCorrModal(false);
+      loadCorrections();
+      Alert.alert('Request sent ✅', 'Your correction request has been sent to HR for approval.');
+    } catch (e) { Alert.alert('Could not send', e.message); }
+    finally { setCorrBusy(false); }
+  };
 
   const stats = monthData?.stats || { present: 0, late: 0, leave: 0, absent: 0, weekoff: 0, hours: 0 };
   const requiredHrs = monthData?.requiredHours ?? 0;
@@ -359,8 +418,77 @@ export default function MyAttendanceScreen({ navigation }) {
               </Text>
             </View>
           )}
+
+          {/* Attendance correction — raise a fix for a missed punch */}
+          {!dayLoading && date <= todayYMD() && dayStatus?.status !== 'weekoff' && (
+            dateCorrection ? (
+              <View style={[styles.corrStatus, {
+                backgroundColor: dateCorrection.status === 'approved' ? '#ECFDF5' : '#FEF3C7',
+              }]}>
+                <MaterialIcons
+                  name={dateCorrection.status === 'approved' ? 'check-circle' : 'hourglass-top'}
+                  size={16}
+                  color={dateCorrection.status === 'approved' ? GREEN : AMBER}
+                />
+                <Text style={[styles.corrStatusText, { color: dateCorrection.status === 'approved' ? '#166534' : '#92400E' }]}>
+                  Correction {dateCorrection.status === 'approved' ? 'approved' : 'pending with HR'} for this day
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.corrBtn} activeOpacity={0.85} onPress={openCorrection}>
+                <MaterialIcons name="build-circle" size={18} color={INDIGO} />
+                <Text style={styles.corrBtnText}>Missed a punch? Request correction</Text>
+              </TouchableOpacity>
+            )
+          )}
         </View>
       </ScrollView>
+
+      {/* Correction request modal */}
+      <Modal visible={corrModal} transparent animationType="fade" onRequestClose={() => setCorrModal(false)}>
+        <View style={styles.corrOverlay}>
+          <View style={styles.corrCard}>
+            <Text style={styles.corrTitle}>Attendance Correction</Text>
+            <Text style={styles.corrSub}>{prettyDate(date)}</Text>
+
+            <Text style={styles.corrLabel}>CORRECT PUNCH-IN (HH:MM, 24h — blank to keep)</Text>
+            <TextInput
+              style={styles.corrInput} placeholder="09:30" placeholderTextColor="#9CA3AF"
+              keyboardType="numbers-and-punctuation" maxLength={5}
+              value={corrIn} onChangeText={setCorrIn}
+            />
+
+            <Text style={styles.corrLabel}>CORRECT PUNCH-OUT (blank to keep)</Text>
+            <TextInput
+              style={styles.corrInput} placeholder="18:00" placeholderTextColor="#9CA3AF"
+              keyboardType="numbers-and-punctuation" maxLength={5}
+              value={corrOut} onChangeText={setCorrOut}
+            />
+
+            <Text style={styles.corrLabel}>REASON *</Text>
+            <TextInput
+              style={[styles.corrInput, { height: 70, textAlignVertical: 'top', paddingTop: 10 }, !corrReason.trim() && { borderColor: '#FCA5A5' }]}
+              placeholder="e.g. Forgot to punch out while leaving site"
+              placeholderTextColor="#9CA3AF"
+              multiline maxLength={500}
+              value={corrReason} onChangeText={setCorrReason}
+            />
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity style={styles.corrCancel} disabled={corrBusy} onPress={() => setCorrModal(false)}>
+                <Text style={styles.corrCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.corrSubmit, (corrBusy || !corrReason.trim()) && { opacity: 0.5 }]}
+                disabled={corrBusy || !corrReason.trim()}
+                onPress={submitCorrection}
+              >
+                {corrBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.corrSubmitText}>Send to HR</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -492,6 +620,22 @@ const styles = StyleSheet.create({
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot: { width: 10, height: 10, borderRadius: 4 },
   legendText: { fontSize: 11, color: GREY, fontWeight: '600' },
+
+  /* Attendance correction */
+  corrBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 14, backgroundColor: '#EEF2FF', borderRadius: 13, paddingVertical: 13, borderWidth: 1.5, borderColor: '#E0E7FF' },
+  corrBtnText: { color: INDIGO, fontSize: 13.5, fontWeight: '800' },
+  corrStatus: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 14, borderRadius: 13, paddingVertical: 12 },
+  corrStatusText: { fontSize: 12.5, fontWeight: '800' },
+  corrOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', padding: 22 },
+  corrCard: { backgroundColor: '#fff', borderRadius: 24, padding: 20 },
+  corrTitle: { fontSize: 17, fontWeight: '800', color: '#111827', textAlign: 'center' },
+  corrSub: { fontSize: 12, color: GREY, textAlign: 'center', marginTop: 3, marginBottom: 6 },
+  corrLabel: { fontSize: 10.5, fontWeight: '800', color: '#9CA3AF', letterSpacing: 0.6, marginTop: 12, marginBottom: 6 },
+  corrInput: { backgroundColor: '#F9FAFB', borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 12, height: 48, fontSize: 15, color: '#111827', fontWeight: '600' },
+  corrCancel: { flex: 1, height: 48, borderRadius: 12, borderWidth: 1.5, borderColor: '#E5E7EB', justifyContent: 'center', alignItems: 'center' },
+  corrCancelText: { color: '#374151', fontWeight: '700' },
+  corrSubmit: { flex: 1, height: 48, borderRadius: 12, backgroundColor: INDIGO, justifyContent: 'center', alignItems: 'center' },
+  corrSubmitText: { color: '#fff', fontWeight: '800' },
 
   dateSection: {
     marginTop: 4,

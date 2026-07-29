@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   Modal, Image, ScrollView, Alert, TextInput, Linking,
@@ -30,6 +30,18 @@ const sessionLabel = (s, i) => {
   return `${name}`;
 };
 
+/* ---------- geofence helpers (mirror the backend) ---------- */
+const ACC_BUFFER_CAP_M = 200; // cap the GPS-accuracy allowance
+const haversineM = (lat1, lng1, lat2, lng2) => {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+};
+const fmtDist = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
+
 export default function PunchScreen({ navigation }) {
   const [now, setNow] = useState(new Date());
   const [sessions, setSessions] = useState([]);
@@ -42,6 +54,8 @@ export default function PunchScreen({ navigation }) {
   const prefetchRef = useRef({ coords: null, address: null, at: 0, promise: null });
   const [locReady, setLocReady] = useState(false);
   const [locError, setLocError] = useState(null); // human-readable location failure, or null
+  const [sites, setSites] = useState(null); // authorized customer sites (null = loading)
+  const [fix, setFix] = useState(null);     // latest GPS fix { lat, lng, acc } for the geofence check
   const [pending, setPending] = useState(0);
   const [locModal, setLocModal] = useState(false);
   const [detailModal, setDetailModal] = useState(null); // session object | null
@@ -71,6 +85,14 @@ export default function PunchScreen({ navigation }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Authorized sites for the punch geofence. On failure we leave the client
+  // gate open ([]) — the backend still enforces it on every punch.
+  useEffect(() => {
+    api('/sites')
+      .then((list) => setSites(Array.isArray(list) ? list : []))
+      .catch(() => setSites([]));
+  }, []);
 
   /* ---------- derived ---------- */
   const openSession = sessions.find(s => !s.punchOutTime) || null;
@@ -103,10 +125,13 @@ export default function PunchScreen({ navigation }) {
             if (last) {
               prefetchRef.current = {
                 coords: { lat: last.coords.latitude, lng: last.coords.longitude, acc: Math.round(last.coords.accuracy ?? 0) },
-                address: null, at: Date.now(), promise: prefetchRef.current.promise,
+                // Use the fix's REAL timestamp: an old cached position must not
+                // pass confirmPunch's 90s freshness gate as if it were fresh.
+                address: null, at: last.timestamp ?? 0, promise: prefetchRef.current.promise,
               };
               setLocReady(true);
               setLocError(null);
+              setFix(prefetchRef.current.coords);
             }
           } catch {}
         }
@@ -132,6 +157,7 @@ export default function PunchScreen({ navigation }) {
         prefetchRef.current = { coords, address, at: Date.now(), promise: null };
         setLocReady(true);
         setLocError(null);
+        setFix(coords);
         return prefetchRef.current;
       } catch {
         prefetchRef.current.promise = null;
@@ -181,9 +207,28 @@ export default function PunchScreen({ navigation }) {
     }
   };
 
-  // Main button: retry location if it failed, otherwise capture the selfie.
+  /* ---------- geofence: punch only inside an authorized customer site ----------
+   * Mirrors the backend rule: within site radius + GPS accuracy (capped).
+   * No sites configured => gate off. The backend re-checks every punch anyway. */
+  const geo = useMemo(() => {
+    if (!sites || sites.length === 0) return { active: false, match: null };
+    if (!fix) return { active: true, waiting: true, match: null };
+    const buffer = Math.min(Math.max(fix.acc || 0, 0), ACC_BUFFER_CAP_M);
+    let match = null, matchDist = Infinity, nearest = null, nearestDist = Infinity;
+    for (const s of sites) {
+      const d = haversineM(fix.lat, fix.lng, s.lat, s.lng);
+      if (d < nearestDist) { nearest = s; nearestDist = d; }
+      if (d <= (s.radiusM || 100) + buffer && d < matchDist) { match = s; matchDist = d; }
+    }
+    return { active: true, match, matchDist, nearest, nearestDist };
+  }, [sites, fix]);
+  const geoBlocked = geo.active && !geo.waiting && !geo.match;
+
+  // Main button: retry location on failure, re-check when outside the fence,
+  // otherwise capture the selfie.
   const onPunchPress = () => {
     if (locError) { setLocError(null); prefetchLocation(); return; }
+    if (geoBlocked) { prefetchLocation(); return; }
     capture();
   };
 
@@ -195,6 +240,7 @@ export default function PunchScreen({ navigation }) {
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.3, base64: true, skipProcessing: true, shutterSound: false,
       });
+      if (geo.match) setSiteName(geo.match.name); // auto-fill the matched site
       setPendingPhoto({ uri: photo.uri, base64: photo.base64 });
       setCapturedAt(new Date());
     } catch (e) {
@@ -204,6 +250,15 @@ export default function PunchScreen({ navigation }) {
 
   /* ---------- confirm: strict location gate ---------- */
   const confirmPunch = async () => {
+    // Geofence guard — the fix may have drifted since capture (60s refresh).
+    if (geoBlocked) {
+      setPendingPhoto(null);
+      Alert.alert(
+        'Wrong location',
+        `You are not at an authorized customer site.${geo.nearest ? ` Nearest: ${geo.nearest.name} — ${fmtDist(geo.nearestDist)} away.` : ''} Please reach the proper customer site address.`
+      );
+      return;
+    }
     setBusy(true);
     try {
       let coords = {}, address = null;
@@ -222,7 +277,7 @@ export default function PunchScreen({ navigation }) {
                 lat: last.coords.latitude, lng: last.coords.longitude,
                 acc: Math.round(last.coords.accuracy ?? 0),
               },
-              address: null, at: Date.now(),
+              address: null, at: last.timestamp ?? 0, // real fix age, not "now"
             };
           } catch {}
         }
@@ -360,16 +415,41 @@ export default function PunchScreen({ navigation }) {
               </Text>
             </View>
 
+            {/* Geofence status — matched site (green) or wrong-location error (red).
+                Hidden while a location error is showing: a match computed from a
+                dead fix must not contradict the red GPS-off chip. */}
+            {geo.active && geo.match && !locError && (
+              <View style={styles.geoOk}>
+                <MaterialIcons name="check-circle" size={15} color={GREEN} />
+                <Text style={styles.geoOkText} numberOfLines={1}>
+                  {geo.match.name} · {fmtDist(geo.matchDist)} away
+                </Text>
+              </View>
+            )}
+            {geoBlocked && (
+              <View style={styles.geoErr}>
+                <MaterialIcons name="location-off" size={16} color={RED} />
+                <Text style={styles.geoErrText}>
+                  You are in the wrong location.
+                  {geo.nearest ? ` Nearest site: ${geo.nearest.name} — ${fmtDist(geo.nearestDist)} away.` : ''}
+                  {' '}Please reach the proper customer site address.
+                </Text>
+              </View>
+            )}
+
             {(() => {
               const locating = !locReady && !locError;      // still trying, no error yet
               const disabled = busy || locating;            // block only while capturing or first fix pending
-              const colors = locError
-                ? ['#F59E0B', '#D97706']                     // amber = retry
+              const colors = locError || geoBlocked
+                ? ['#F59E0B', '#D97706']                     // amber = retry / re-check
                 : locating
                   ? ['#9CA3AF', '#9CA3AF']                   // grey = waiting
                   : punchedIn ? ['#EF4444', '#B91C1C'] : ['#22C55E', '#15803D'];
-              const icon = locError ? 'refresh' : locating ? 'location-searching' : 'photo-camera';
-              const label = locError ? 'RETRY LOCATION' : locating ? 'LOCATING…' : punchedIn ? 'PUNCH OUT' : 'PUNCH IN';
+              const icon = locError || geoBlocked ? 'refresh' : locating ? 'location-searching' : 'photo-camera';
+              const label = locError ? 'RETRY LOCATION'
+                : geoBlocked ? 'RE-CHECK LOCATION'
+                : locating ? 'LOCATING…'
+                : punchedIn ? 'PUNCH OUT' : 'PUNCH IN';
               return (
                 <TouchableOpacity
                   style={[styles.punchBtn, disabled ? styles.punchBtnDisabled : null]}
@@ -476,13 +556,18 @@ export default function PunchScreen({ navigation }) {
                 <MaterialIcons name="business" size={16} color={INDIGO} />
                 <TextInput
                   style={styles.siteInput}
-                  value={siteName}
+                  // Live-sync: if the geofence match changes while this modal is
+                  // open, show the current matched site, never a stale value.
+                  value={geo.match ? geo.match.name : siteName}
                   onChangeText={setSiteName}
                   placeholder="Company / Site name"
                   placeholderTextColor="#9CA3AF"
                   maxLength={60}
+                  editable={!geo.match} // matched site is authoritative
                 />
-                {siteName !== 'SESS' && (
+                {geo.match ? (
+                  <MaterialIcons name="verified" size={17} color={GREEN} />
+                ) : siteName !== 'SESS' && (
                   <TouchableOpacity onPress={() => setSiteName('SESS')}>
                     <MaterialIcons name="restart-alt" size={17} color="#9CA3AF" />
                   </TouchableOpacity>
@@ -647,6 +732,11 @@ const styles = StyleSheet.create({
   locChipError: { backgroundColor: '#FEF2F2' },
   locDot: { width: 7, height: 7, borderRadius: 4 },
   locChipText: { flexShrink: 1, fontSize: 11.5, color: '#374151', fontWeight: '600' },
+
+  geoOk: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, backgroundColor: '#ECFDF5', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, maxWidth: '92%', borderWidth: 1, borderColor: '#BBF7D0' },
+  geoOkText: { flexShrink: 1, fontSize: 11.5, color: '#166534', fontWeight: '800' },
+  geoErr: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 8, backgroundColor: '#FEF2F2', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 9, maxWidth: '92%', borderWidth: 1, borderColor: '#FECACA' },
+  geoErrText: { flex: 1, fontSize: 11.5, color: RED, fontWeight: '700', lineHeight: 16 },
 
   punchBtn: { marginTop: 14, borderRadius: 27, elevation: 3, width: '78%' },
   punchBtnDisabled: { elevation: 0 },

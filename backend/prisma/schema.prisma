@@ -21,7 +21,110 @@ model User {
   leaveRequests  LeaveRequest[] @relation("userLeaves")
   reviewedLeaves LeaveRequest[] @relation("reviewedLeaves")
 
+  // ---- Employment profile (HRMS master data) ----
+  employeeId     String?   @unique @map("employee_id")
+  designation    String?
+  department     String?
+  employmentType String?   @map("employment_type") // Permanent | Temporary | Intern | Contract | Consultant
+  dateOfJoining  DateTime? @map("date_of_joining") @db.Date
+  reportingManagerId Int?  @map("reporting_manager_id")
+  reportingManager   User?  @relation("reports", fields: [reportingManagerId], references: [id])
+  directReports      User[] @relation("reports")
+
+  // ---- Personal ----
+  dateOfBirth      DateTime? @map("date_of_birth") @db.Date
+  bloodGroup       String?   @map("blood_group")
+  address          String?
+  emergencyContact String?   @map("emergency_contact")
+
+  // ---- Statutory & bank (admin-only visibility) ----
+  esiNumber   String? @map("esi_number")
+  epfNumber   String? @map("epf_number")
+  panNumber   String? @map("pan_number")
+  salaryCtc   Float?  @map("salary_ctc")
+  bankName    String? @map("bank_name")
+  bankAccount String? @map("bank_account")
+  bankIfsc    String? @map("bank_ifsc")
+
+  // ---- Exit management ----
+  exitDate            DateTime? @map("exit_date") @db.Date
+  exitReason          String?   @map("exit_reason") // Resigned | Abscond | Termination
+  noticeServed        Boolean?  @map("notice_served")
+  exitFormalitiesDone Boolean?  @map("exit_formalities_done")
+
+  corrections         AttendanceCorrection[] @relation("userCorrections")
+  reviewedCorrections AttendanceCorrection[] @relation("reviewedCorrections")
+  sentMessages     ChatMessage[] @relation("sentMessages")
+  receivedMessages ChatMessage[] @relation("receivedMessages")
+  createdGroups    ChatGroup[]       @relation("createdGroups")
+  groupMemberships ChatGroupMember[] @relation("groupMemberships")
+
   @@map("users")
+}
+
+// Team chat message — either a 1:1 DM (receiverId) or a group post (groupId).
+// Exactly one of receiverId/groupId is set (enforced in the route layer).
+model ChatMessage {
+  id         Int       @id @default(autoincrement())
+  senderId   Int       @map("sender_id")
+  receiverId Int?      @map("receiver_id")
+  groupId    Int?      @map("group_id")
+  body       String
+  readAt     DateTime? @map("read_at") // DM read receipt; groups use lastReadId
+  createdAt  DateTime  @default(now()) @map("created_at")
+  sender     User       @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   User?      @relation("receivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  group      ChatGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([receiverId, readAt])
+  @@index([senderId, receiverId, id])
+  @@index([groupId, id])
+  @@map("chat_messages")
+}
+
+model ChatGroup {
+  id          Int      @id @default(autoincrement())
+  name        String
+  createdById Int      @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdBy   User     @relation("createdGroups", fields: [createdById], references: [id])
+  members     ChatGroupMember[]
+  messages    ChatMessage[]
+
+  @@map("chat_groups")
+}
+
+// Membership + per-member read cursor (unread = messages with id > lastReadId).
+model ChatGroupMember {
+  groupId    Int      @map("group_id")
+  userId     Int      @map("user_id")
+  lastReadId Int      @default(0) @map("last_read_id")
+  joinedAt   DateTime @default(now()) @map("joined_at")
+  group      ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user       User      @relation("groupMemberships", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@map("chat_group_members")
+}
+
+// Employee-raised attendance correction (missed punch in/out) awaiting admin review.
+model AttendanceCorrection {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  date         DateTime  @db.Date
+  requestedIn  DateTime? @map("requested_in")
+  requestedOut DateTime? @map("requested_out")
+  reason       String
+  status       String    @default("pending") // pending | approved | rejected | cancelled
+  reviewNote   String?   @map("review_note")
+  reviewedById Int?      @map("reviewed_by_id")
+  reviewedAt   DateTime? @map("reviewed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  user         User      @relation("userCorrections", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy   User?     @relation("reviewedCorrections", fields: [reviewedById], references: [id])
+
+  @@index([userId, date])
+  @@map("attendance_corrections")
 }
 
 model Role {
@@ -76,6 +179,19 @@ model OtpCode {
 
   @@index([phone])
   @@map("otp_codes")
+}
+
+model Site {
+  id        Int      @id @default(autoincrement())
+  name      String
+  address   String?
+  lat       Float
+  lng       Float
+  radiusM   Int      @default(100) @map("radius_m")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("sites")
 }
 
 model LeaveType {

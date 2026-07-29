@@ -9,6 +9,9 @@ import {
   IconMap,
   IconGift,
   IconLeave,
+  IconMapPin,
+  IconChart,
+  IconChat,
   IconLogOut,
   IconChevronLeft,
 } from './icons';
@@ -20,6 +23,9 @@ const NAV = [
   { to: '/trail', label: 'Team Trail', icon: IconMap },
   { to: '/holidays', label: 'Holidays', icon: IconGift },
   { to: '/leaves', label: 'Leave Management', icon: IconLeave },
+  { to: '/sites', label: 'Customer Sites', icon: IconMapPin },
+  { to: '/reports', label: 'Reports', icon: IconChart },
+  { to: '/chat', label: 'Team Chat', icon: IconChat },
 ];
 
 const COLLAPSE_KEY = 'sess_sidebar_collapsed';

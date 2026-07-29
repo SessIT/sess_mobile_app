@@ -31,12 +31,9 @@ router.get('/', async (req, res) => {
   try {
     const users = await prisma.user.findMany({
       orderBy: { id: 'asc' },
-      select: {
-        id: true, username: true, fullName: true, phone: true, isActive: true, createdAt: true,
-        roles: { select: { role: { select: { name: true } } } },
-      },
+      select: USER_SELECT,
     });
-    res.json(users.map(u => ({ ...u, roles: u.roles.map(r => r.role.name) })));
+    res.json(users.map(shapeUser));
   } catch (e) {
     console.error(e);
     res.status(500).json({ message: 'Server error' });
@@ -50,6 +47,104 @@ function normPhone(phone) {
   if (digits.length !== 10) return { ok: false, message: 'Phone must be a 10-digit mobile number' };
   return { ok: true, value: digits };
 }
+
+/* ---------------- Employment / personal / statutory profile fields ---------------- */
+const EMPLOYMENT_TYPES = ['Permanent', 'Temporary', 'Intern', 'Contract', 'Consultant'];
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const dateOnly = (ymd) => new Date(ymd + 'T00:00:00.000Z');
+const strOrNull = (v, max) => {
+  if (v === undefined) return undefined;
+  const s = String(v ?? '').trim();
+  return s ? s.slice(0, max) : null;
+};
+// Fields shown on the admin user list / edit form (everything except passwordHash).
+const USER_SELECT = {
+  id: true, username: true, fullName: true, phone: true, isActive: true, createdAt: true,
+  employeeId: true, designation: true, department: true, employmentType: true,
+  dateOfJoining: true, reportingManagerId: true,
+  reportingManager: { select: { id: true, fullName: true, username: true } },
+  dateOfBirth: true, bloodGroup: true, address: true, emergencyContact: true,
+  esiNumber: true, epfNumber: true, panNumber: true, salaryCtc: true,
+  bankName: true, bankAccount: true, bankIfsc: true,
+  exitDate: true, exitReason: true, noticeServed: true, exitFormalitiesDone: true,
+  roles: { select: { role: { select: { name: true } } } },
+};
+
+// Validate + coerce the optional profile fields from a request body into a
+// Prisma `data` fragment. `id` is the user being edited (null on create).
+async function buildProfileData(body, id) {
+  const data = {};
+  const fail = (message) => ({ ok: false, message });
+
+  if (body.employeeId !== undefined) {
+    const v = strOrNull(body.employeeId, 30);
+    if (v) {
+      const taken = await prisma.user.findFirst({ where: { employeeId: v, ...(id ? { id: { not: id } } : {}) } });
+      if (taken) return fail('Employee ID already in use');
+    }
+    data.employeeId = v;
+  }
+  if (body.designation !== undefined) data.designation = strOrNull(body.designation, 80);
+  if (body.department !== undefined) data.department = strOrNull(body.department, 80);
+  if (body.employmentType !== undefined) {
+    const v = strOrNull(body.employmentType, 20);
+    if (v && !EMPLOYMENT_TYPES.includes(v)) return fail('Invalid employment type');
+    data.employmentType = v;
+  }
+  for (const [key] of [['dateOfJoining'], ['dateOfBirth']]) {
+    if (body[key] !== undefined) {
+      const raw = String(body[key] || '').trim();
+      if (!raw) data[key] = null;
+      else if (!YMD.test(raw)) return fail(`${key} must be YYYY-MM-DD`);
+      else data[key] = dateOnly(raw);
+    }
+  }
+  if (body.reportingManagerId !== undefined) {
+    const raw = body.reportingManagerId;
+    if (raw === null || raw === '') data.reportingManagerId = null;
+    else {
+      const mid = Number(raw);
+      if (!Number.isInteger(mid)) return fail('Invalid reporting manager');
+      if (id && mid === id) return fail('An employee cannot report to themselves');
+      const mgr = await prisma.user.findUnique({ where: { id: mid } });
+      if (!mgr) return fail('Reporting manager not found');
+      data.reportingManagerId = mid;
+    }
+  }
+  if (body.bloodGroup !== undefined) data.bloodGroup = strOrNull(body.bloodGroup, 10);
+  if (body.address !== undefined) data.address = strOrNull(body.address, 300);
+  if (body.emergencyContact !== undefined) {
+    const v = strOrNull(body.emergencyContact, 15);
+    if (v && String(v).replace(/\D/g, '').length !== 10) return fail('Emergency contact must be a 10-digit number');
+    data.emergencyContact = v ? String(v).replace(/\D/g, '') : null;
+  }
+  if (body.esiNumber !== undefined) data.esiNumber = strOrNull(body.esiNumber, 25);
+  if (body.epfNumber !== undefined) data.epfNumber = strOrNull(body.epfNumber, 30);
+  if (body.panNumber !== undefined) {
+    const v = strOrNull(body.panNumber, 10);
+    if (v && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v.toUpperCase())) return fail('PAN must look like ABCDE1234F');
+    data.panNumber = v ? v.toUpperCase() : null;
+  }
+  if (body.salaryCtc !== undefined) {
+    const raw = body.salaryCtc;
+    if (raw === null || raw === '') data.salaryCtc = null;
+    else {
+      const n = parseFloat(raw);
+      if (!Number.isFinite(n) || n < 0) return fail('Salary / CTC must be a positive number');
+      data.salaryCtc = n;
+    }
+  }
+  if (body.bankName !== undefined) data.bankName = strOrNull(body.bankName, 80);
+  if (body.bankAccount !== undefined) data.bankAccount = strOrNull(body.bankAccount, 30);
+  if (body.bankIfsc !== undefined) {
+    const v = strOrNull(body.bankIfsc, 11);
+    if (v && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(v.toUpperCase())) return fail('IFSC must look like SBIN0001234');
+    data.bankIfsc = v ? v.toUpperCase() : null;
+  }
+  return { ok: true, data };
+}
+
+const shapeUser = (u) => ({ ...u, roles: u.roles.map((r) => r.role.name) });
 
 // POST /api/users - create a user
 router.post('/', async (req, res) => {
@@ -72,6 +167,10 @@ router.post('/', async (req, res) => {
       if (phoneTaken) return res.status(409).json({ message: 'Phone number already in use' });
     }
 
+    // Optional employment/personal/statutory fields on create.
+    const prof = await buildProfileData(req.body || {}, null);
+    if (!prof.ok) return res.status(400).json({ message: prof.message });
+
     const role = await prisma.role.upsert({
       where: { name: roleName }, update: {}, create: { name: roleName },
     });
@@ -83,11 +182,12 @@ router.post('/', async (req, res) => {
         phone: ph.value,
         passwordHash: await bcrypt.hash(password, 10),
         roles: { create: { roleId: role.id } },
+        ...prof.data,
       },
-      select: { id: true, username: true, fullName: true, phone: true, isActive: true },
+      select: USER_SELECT,
     });
 
-    res.status(201).json({ ...user, roles: [roleName] });
+    res.status(201).json(shapeUser(user));
   } catch (e) {
     console.error(e);
     res.status(500).json({ message: 'Server error' });
@@ -136,6 +236,11 @@ router.patch('/:id', async (req, res) => {
       data.passwordHash = await bcrypt.hash(String(password), 10);
     }
 
+    // Employment / personal / statutory profile fields (all optional).
+    const prof = await buildProfileData(req.body || {}, id);
+    if (!prof.ok) return res.status(400).json({ message: prof.message });
+    Object.assign(data, prof.data);
+
     if (roleName !== undefined) {
       if (!STANDARD_ROLES.includes(roleName))
         return res.status(400).json({ message: 'Invalid role' });
@@ -151,12 +256,9 @@ router.patch('/:id', async (req, res) => {
 
     const updated = await prisma.user.findUnique({
       where: { id },
-      select: {
-        id: true, username: true, fullName: true, phone: true, isActive: true, createdAt: true,
-        roles: { select: { role: { select: { name: true } } } },
-      },
+      select: USER_SELECT,
     });
-    res.json({ ...updated, roles: updated.roles.map(r => r.role.name) });
+    res.json(shapeUser(updated));
   } catch (e) {
     if (e.code === 'P2025') return res.status(404).json({ message: 'User not found' });
     console.error(e);

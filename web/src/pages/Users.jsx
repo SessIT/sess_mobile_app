@@ -213,6 +213,7 @@ export default function Users() {
       <CreateUserModal
         open={createOpen}
         roles={roles}
+        users={users}
         onClose={() => setCreateOpen(false)}
         onCreated={onCreated}
       />
@@ -220,6 +221,7 @@ export default function Users() {
       <EditUserModal
         user={editUser}
         roles={roles}
+        users={users}
         onClose={() => setEditUser(null)}
         onUpdated={onUpdated}
       />
@@ -227,15 +229,140 @@ export default function Users() {
   );
 }
 
+/* ----------------------------------------------- Shared profile fields */
+const EMPLOYMENT_TYPES = ['Permanent', 'Temporary', 'Intern', 'Contract', 'Consultant'];
+const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+
+const EMPTY_PROFILE = {
+  employeeId: '', designation: '', department: '', employmentType: '',
+  dateOfJoining: '', reportingManagerId: '',
+  dateOfBirth: '', bloodGroup: '', address: '', emergencyContact: '',
+  esiNumber: '', epfNumber: '', panNumber: '', salaryCtc: '',
+  bankName: '', bankAccount: '', bankIfsc: '',
+};
+
+// Prefill profile form state from an API user object (dates arrive as ISO).
+const profileFromUser = (u) => ({
+  employeeId: u.employeeId || '',
+  designation: u.designation || '',
+  department: u.department || '',
+  employmentType: u.employmentType || '',
+  dateOfJoining: u.dateOfJoining ? String(u.dateOfJoining).slice(0, 10) : '',
+  reportingManagerId: u.reportingManagerId != null ? String(u.reportingManagerId) : '',
+  dateOfBirth: u.dateOfBirth ? String(u.dateOfBirth).slice(0, 10) : '',
+  bloodGroup: u.bloodGroup || '',
+  address: u.address || '',
+  emergencyContact: u.emergencyContact || '',
+  esiNumber: u.esiNumber || '',
+  epfNumber: u.epfNumber || '',
+  panNumber: u.panNumber || '',
+  salaryCtc: u.salaryCtc != null ? String(u.salaryCtc) : '',
+  bankName: u.bankName || '',
+  bankAccount: u.bankAccount || '',
+  bankIfsc: u.bankIfsc || '',
+});
+
+const SectionTitle = ({ children }) => (
+  <p className="col-span-full border-b border-slate-100 pb-1 pt-2 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+    {children}
+  </p>
+);
+
+/* Employment + personal + statutory fields, shared by Create and Edit.
+   `managers` = user list for the Reporting Manager dropdown; `selfId` excludes
+   the user being edited from that list. */
+function ProfileFields({ form, set, managers, selfId }) {
+  return (
+    <>
+      <SectionTitle>Employment</SectionTitle>
+      <Field label="Employee ID">
+        <Input value={form.employeeId} onChange={(e) => set('employeeId', e.target.value)} placeholder="SESS-014" />
+      </Field>
+      <Field label="Date of joining">
+        <Input type="date" value={form.dateOfJoining} onChange={(e) => set('dateOfJoining', e.target.value)} />
+      </Field>
+      <Field label="Designation">
+        <Input value={form.designation} onChange={(e) => set('designation', e.target.value)} placeholder="Service Engineer" />
+      </Field>
+      <Field label="Department">
+        <Input value={form.department} onChange={(e) => set('department', e.target.value)} placeholder="Service" />
+      </Field>
+      <Field label="Employment type">
+        <Select value={form.employmentType} onChange={(e) => set('employmentType', e.target.value)}>
+          <option value="">— Select —</option>
+          {EMPLOYMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </Select>
+      </Field>
+      <Field label="Reporting manager">
+        <Select value={form.reportingManagerId} onChange={(e) => set('reportingManagerId', e.target.value)}>
+          <option value="">— None —</option>
+          {(managers || [])
+            .filter((m) => m.id !== selfId && m.isActive)
+            .map((m) => <option key={m.id} value={m.id}>{m.fullName || m.username}</option>)}
+        </Select>
+      </Field>
+
+      <SectionTitle>Personal</SectionTitle>
+      <Field label="Date of birth">
+        <Input type="date" value={form.dateOfBirth} onChange={(e) => set('dateOfBirth', e.target.value)} />
+      </Field>
+      <Field label="Blood group">
+        <Select value={form.bloodGroup} onChange={(e) => set('bloodGroup', e.target.value)}>
+          <option value="">— Select —</option>
+          {BLOOD_GROUPS.map((b) => <option key={b} value={b}>{b}</option>)}
+        </Select>
+      </Field>
+      <Field label="Emergency contact" hint="10-digit number.">
+        <Input
+          value={form.emergencyContact}
+          onChange={(e) => set('emergencyContact', e.target.value.replace(/\D/g, '').slice(0, 10))}
+          placeholder="9876543210"
+          inputMode="numeric"
+        />
+      </Field>
+      <div className="sm:col-span-1">
+        <Field label="Address">
+          <Input value={form.address} onChange={(e) => set('address', e.target.value)} placeholder="Street, city, PIN" />
+        </Field>
+      </div>
+
+      <SectionTitle>Statutory &amp; Bank</SectionTitle>
+      <Field label="ESI number">
+        <Input value={form.esiNumber} onChange={(e) => set('esiNumber', e.target.value)} />
+      </Field>
+      <Field label="EPF number">
+        <Input value={form.epfNumber} onChange={(e) => set('epfNumber', e.target.value)} />
+      </Field>
+      <Field label="PAN number">
+        <Input value={form.panNumber} onChange={(e) => set('panNumber', e.target.value.toUpperCase().slice(0, 10))} placeholder="ABCDE1234F" />
+      </Field>
+      <Field label="Salary / CTC (₹ per year)">
+        <Input type="number" min="0" value={form.salaryCtc} onChange={(e) => set('salaryCtc', e.target.value)} placeholder="360000" />
+      </Field>
+      <Field label="Bank name">
+        <Input value={form.bankName} onChange={(e) => set('bankName', e.target.value)} />
+      </Field>
+      <Field label="Bank account number">
+        <Input value={form.bankAccount} onChange={(e) => set('bankAccount', e.target.value.replace(/\D/g, '').slice(0, 30))} inputMode="numeric" />
+      </Field>
+      <Field label="Bank IFSC">
+        <Input value={form.bankIfsc} onChange={(e) => set('bankIfsc', e.target.value.toUpperCase().slice(0, 11))} placeholder="SBIN0001234" />
+      </Field>
+    </>
+  );
+}
+
 /* --------------------------------------------------------- Create modal */
-function CreateUserModal({ open, roles, onClose, onCreated }) {
+function CreateUserModal({ open, roles, users, onClose, onCreated }) {
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [roleName, setRoleName] = useState('');
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const setProf = (k, v) => setProfile((p) => ({ ...p, [k]: v }));
 
   // Reset the form each time the modal opens; default role to the first option.
   useEffect(() => {
@@ -245,6 +372,7 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
       setPhone('');
       setPassword('');
       setRoleName(roles[0] || '');
+      setProfile(EMPTY_PROFILE);
       setError('');
       setBusy(false);
     }
@@ -278,6 +406,8 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
         phone: phone.trim(),
         password,
         roleName,
+        ...profile,
+        reportingManagerId: profile.reportingManagerId ? Number(profile.reportingManagerId) : null,
       });
       onCreated(created);
     } catch (err) {
@@ -293,6 +423,7 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
       open={open}
       onClose={busy ? undefined : onClose}
       title="Create User"
+      width="max-w-3xl"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={busy}>
@@ -311,9 +442,10 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
         </>
       }
     >
-      <form onSubmit={submit} className="space-y-4">
-        {error && <ErrorNote>{error}</ErrorNote>}
+      <form onSubmit={submit} className="grid grid-cols-1 gap-x-5 gap-y-3 sm:grid-cols-2">
+        {error && <div className="col-span-full"><ErrorNote>{error}</ErrorNote></div>}
 
+        <SectionTitle>Account</SectionTitle>
         <Field label="Full name">
           <Input
             value={fullName}
@@ -362,6 +494,9 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
             ))}
           </Select>
         </Field>
+        <div /> {/* grid filler */}
+
+        <ProfileFields form={profile} set={setProf} managers={users} selfId={null} />
 
         {/* Hidden submit so Enter submits the form. */}
         <button type="submit" className="hidden" disabled={!canSubmit} aria-hidden="true" />
@@ -371,15 +506,17 @@ function CreateUserModal({ open, roles, onClose, onCreated }) {
 }
 
 /* ----------------------------------------------------------- Edit modal */
-function EditUserModal({ user, roles, onClose, onUpdated }) {
+function EditUserModal({ user, roles, users, onClose, onUpdated }) {
   const open = !!user;
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [phone, setPhone] = useState('');
   const [roleName, setRoleName] = useState('');
   const [password, setPassword] = useState(''); // blank = keep current
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const setProf = (k, v) => setProfile((p) => ({ ...p, [k]: v }));
 
   // Prefill from the selected user whenever the modal opens.
   useEffect(() => {
@@ -389,6 +526,7 @@ function EditUserModal({ user, roles, onClose, onUpdated }) {
       setPhone(user.phone || '');
       setRoleName(user.roles?.[0] || roles[0] || '');
       setPassword('');
+      setProfile(profileFromUser(user));
       setError('');
       setBusy(false);
     }
@@ -418,6 +556,8 @@ function EditUserModal({ user, roles, onClose, onUpdated }) {
         fullName: fullName.trim(),
         phone: phone.trim(),
         roleName,
+        ...profile,
+        reportingManagerId: profile.reportingManagerId ? Number(profile.reportingManagerId) : null,
       };
       if (password) body.password = password; // only send when resetting
       const updated = await apiPatch(`/users/${user.id}`, body);
@@ -434,6 +574,7 @@ function EditUserModal({ user, roles, onClose, onUpdated }) {
       open={open}
       onClose={busy ? undefined : onClose}
       title="Edit User"
+      width="max-w-3xl"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={busy}>
@@ -452,9 +593,10 @@ function EditUserModal({ user, roles, onClose, onUpdated }) {
         </>
       }
     >
-      <form onSubmit={submit} className="space-y-4">
-        {error && <ErrorNote>{error}</ErrorNote>}
+      <form onSubmit={submit} className="grid grid-cols-1 gap-x-5 gap-y-3 sm:grid-cols-2">
+        {error && <div className="col-span-full"><ErrorNote>{error}</ErrorNote></div>}
 
+        <SectionTitle>Account</SectionTitle>
         <Field label="Full name">
           <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Ilamparithi SDE" autoFocus />
         </Field>
@@ -492,6 +634,9 @@ function EditUserModal({ user, roles, onClose, onUpdated }) {
             autoComplete="new-password"
           />
         </Field>
+        <div /> {/* grid filler */}
+
+        <ProfileFields form={profile} set={setProf} managers={users} selfId={user?.id ?? null} />
 
         <button type="submit" className="hidden" disabled={!canSubmit} aria-hidden="true" />
       </form>

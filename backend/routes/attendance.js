@@ -55,6 +55,69 @@ const lateLevelOf = (firstIn) => {
 const isLateLevel = (lvl) => lvl === 'grace' || lvl === 'late';
 
 const num = (v) => (v !== undefined && v !== null && v !== '' ? parseFloat(v) : null);
+const finiteOr = (v, fb = null) => (Number.isFinite(v) ? v : fb);
+// Punch coords must be real, in-range numbers (NaN from parseFloat('abc') must not slip through).
+const validPunchCoords = (lat, lng) =>
+  Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+// Client-supplied free text: coerce to a bounded string (reject non-strings).
+const cleanSiteName = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 60) : 'SESS');
+const cleanAddress = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : null);
+
+/* ==================== GEOFENCE (authorized customer sites) ====================
+ * Punch in/out is only allowed within an active site's fence:
+ *   effective boundary = site radius + the phone's reported GPS accuracy,
+ * with the accuracy buffer capped so a huge (or spoofed) accuracy value can't
+ * open the fence everywhere. If NO sites are configured yet, the gate is off —
+ * this keeps punching working until the admin registers sites.
+ * Admin manual sessions (/admin/session) intentionally bypass the gate. */
+const ACC_BUFFER_CAP_M = 200;
+
+const haversineM = (lat1, lng1, lat2, lng2) => {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+};
+
+const fmtDistance = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
+
+// -> { ok:true, site }             inside a fence
+// -> { ok:true, site:null }        no sites configured (gate off)
+// -> { ok:false, nearest, distanceM }  outside every fence
+async function checkGeofence(lat, lng, acc) {
+  let sites;
+  try {
+    sites = await prisma.site.findMany({ where: { isActive: true } });
+  } catch (e) {
+    // Fail-open if the sites table doesn't exist yet (migration not run) so
+    // attendance keeps working; the gate arms itself once the table is live.
+    console.warn('Geofence check skipped:', e.message);
+    return { ok: true, site: null };
+  }
+  if (sites.length === 0) return { ok: true, site: null };
+  // NaN-safe: a malformed accuracy must not poison the fence math (NaN buffer
+  // would make every `d <= radius + buffer` false and 403 people standing on-site).
+  const accN = num(acc);
+  const buffer = Number.isFinite(accN) ? Math.min(Math.max(accN, 0), ACC_BUFFER_CAP_M) : 0;
+  let best = null, bestDist = Infinity, nearest = null, nearestDist = Infinity;
+  for (const s of sites) {
+    const d = haversineM(lat, lng, s.lat, s.lng);
+    if (d < nearestDist) { nearest = s; nearestDist = d; }
+    if (d <= s.radiusM + buffer && d < bestDist) { best = s; bestDist = d; }
+  }
+  if (best) return { ok: true, site: best };
+  return { ok: false, nearest, distanceM: Math.round(nearestDist) };
+}
+
+const geofenceError = (gate) => ({
+  message: gate.nearest
+    ? `You are in the wrong location. Nearest authorized site: ${gate.nearest.name} (${fmtDistance(gate.distanceM)} away). Please reach the proper customer site address.`
+    : 'You are in the wrong location. Please reach an authorized customer site to punch in/out.',
+  code: 'OUT_OF_RANGE',
+  nearest: gate.nearest ? { id: gate.nearest.id, name: gate.nearest.name, distanceM: gate.distanceM } : null,
+});
 
 // GET /api/attendance/today — ALL today sessions
 router.get('/today', async (req, res) => {
@@ -82,17 +145,24 @@ router.post('/punch-in', async (req, res) => {
 
     const now = new Date();
     const { lat, lng, acc, photoBase64, address, siteName } = req.body || {};
-    if (num(req.body?.lat) == null || num(req.body?.lng) == null)
-      return res.status(400).json({ message: 'Location is required for punch In' });
+    const pLat = num(lat), pLng = num(lng);
+    if (!validPunchCoords(pLat, pLng))
+      return res.status(400).json({ message: 'A valid location is required for punch in' });
+
+    // Geofence: must be at an authorized customer site (when sites exist).
+    const gate = await checkGeofence(pLat, pLng, acc);
+    if (!gate.ok) return res.status(403).json(geofenceError(gate));
+
     const session = await prisma.attendanceSession.create({
       data: {
         userId: req.user.sub,
         punchInTime: now,
-        punchInLat: num(lat), punchInLng: num(lng), punchInAcc: num(acc),
+        punchInLat: pLat, punchInLng: pLng, punchInAcc: finiteOr(num(acc)),
         punchInPhoto: savePhoto(req.user.sub, photoBase64),
-        punchInAddress: address || null,
+        punchInAddress: cleanAddress(address),
         isLate: sessionCount === 0 && now > lateCutoff,
-        siteName: (siteName || 'SESS').trim().slice(0, 60),
+        // Matched site name is authoritative; free-text only while the gate is off.
+        siteName: gate.site ? gate.site.name : cleanSiteName(siteName),
       },
     });
     res.status(201).json(session);
@@ -110,17 +180,23 @@ router.post('/punch-out', async (req, res) => {
 
     const now = new Date();
     const { lat, lng, acc, photoBase64, address } = req.body || {};
-    if (num(req.body?.lat) == null || num(req.body?.lng) == null)
-      return res.status(400).json({ message: 'Location is required for punch out' });
+    const pLat = num(lat), pLng = num(lng);
+    if (!validPunchCoords(pLat, pLng))
+      return res.status(400).json({ message: 'A valid location is required for punch out' });
+
+    // Geofence: punch-out must also happen at an authorized site.
+    const gate = await checkGeofence(pLat, pLng, acc);
+    if (!gate.ok) return res.status(403).json(geofenceError(gate));
+
     const hours = (now - session.punchInTime) / 3600000;
     const updated = await prisma.attendanceSession.update({
       where: { id: session.id },
       data: {
         punchOutTime: now,
-        punchOutLat: num(lat), punchOutLng: num(lng), punchOutAcc: num(acc),
+        punchOutLat: pLat, punchOutLng: pLng, punchOutAcc: finiteOr(num(acc)),
         punchOutPhoto: savePhoto(req.user.sub, photoBase64),
-        punchOutAddress: address || null,
-        workingHours: Math.round(hours * 100) / 100,        
+        punchOutAddress: cleanAddress(address),
+        workingHours: Math.round(hours * 100) / 100,
       },
     });
     res.json(updated);
@@ -473,9 +549,9 @@ router.post('/admin/session', requireRole(ADMIN), async (req, res) => {
         punchOutTime: pout,
         workingHours,
         isLate: isLateLevel(lateLevelOf(pin)),
-        siteName: (siteName || 'SESS').trim().slice(0, 60),
-        punchInAddress: punchInAddress || null,
-        punchOutAddress: punchOutAddress || null,
+        siteName: cleanSiteName(siteName),
+        punchInAddress: cleanAddress(punchInAddress),
+        punchOutAddress: cleanAddress(punchOutAddress),
       },
     });
     res.status(201).json(session);
@@ -498,9 +574,9 @@ router.patch('/admin/session/:id', requireRole(ADMIN), async (req, res) => {
       data.punchInTime = pin;
       data.isLate = isLateLevel(lateLevelOf(pin));
     }
-    if (siteName !== undefined) data.siteName = (siteName || 'SESS').trim().slice(0, 60);
-    if (punchInAddress !== undefined) data.punchInAddress = punchInAddress || null;
-    if (punchOutAddress !== undefined) data.punchOutAddress = punchOutAddress || null;
+    if (siteName !== undefined) data.siteName = cleanSiteName(siteName);
+    if (punchInAddress !== undefined) data.punchInAddress = cleanAddress(punchInAddress);
+    if (punchOutAddress !== undefined) data.punchOutAddress = cleanAddress(punchOutAddress);
 
     const finalIn = data.punchInTime || existing.punchInTime;
 
@@ -540,6 +616,185 @@ router.delete('/admin/session/:id', requireRole(ADMIN), async (req, res) => {
     if (e.code === 'P2025') return res.status(404).json({ message: 'Session not found' });
     console.error(e); res.status(500).json({ message: 'Server error' });
   }
+});
+
+/* ==================== ATTENDANCE CORRECTION REQUESTS ====================
+ * Employee raises a correction for a missed punch (in/out); admin reviews.
+ * On approval the correction is applied to the day's sessions automatically. */
+
+const isoOrNull = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? new Date(t) : undefined; // undefined = invalid
+};
+
+// POST /api/attendance/corrections — employee raises a request
+router.post('/corrections', async (req, res) => {
+  try {
+    const { date, requestedIn, requestedOut, reason } = req.body || {};
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || ''))
+      return res.status(400).json({ message: 'date (YYYY-MM-DD) is required' });
+    if (date > ymdIST(new Date()))
+      return res.status(400).json({ message: 'Cannot request a correction for a future date' });
+    const reasonTrim = String(reason || '').trim();
+    if (!reasonTrim)
+      return res.status(400).json({ message: 'A reason is required' });
+
+    const inT = isoOrNull(requestedIn);
+    const outT = isoOrNull(requestedOut);
+    if (inT === undefined || outT === undefined)
+      return res.status(400).json({ message: 'Invalid punch time format' });
+    if (!inT && !outT)
+      return res.status(400).json({ message: 'Provide the correct punch-in and/or punch-out time' });
+    if (inT && outT && outT <= inT)
+      return res.status(400).json({ message: 'Punch-out must be after punch-in' });
+
+    const dup = await prisma.attendanceCorrection.findFirst({
+      where: { userId: req.user.sub, date: dateOnlyUTC(date), status: 'pending' },
+    });
+    if (dup) return res.status(409).json({ message: 'You already have a pending correction for this date' });
+
+    const created = await prisma.attendanceCorrection.create({
+      data: {
+        userId: req.user.sub,
+        date: dateOnlyUTC(date),
+        requestedIn: inT,
+        requestedOut: outT,
+        reason: reasonTrim.slice(0, 500),
+      },
+    });
+    res.status(201).json(created);
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// GET /api/attendance/corrections/my — own requests (newest first)
+router.get('/corrections/my', async (req, res) => {
+  try {
+    const requests = await prisma.attendanceCorrection.findMany({
+      where: { userId: req.user.sub },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { reviewedBy: { select: { fullName: true, username: true } } },
+    });
+    res.json({ requests });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// DELETE /api/attendance/corrections/:id — cancel own pending request
+router.delete('/corrections/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const row = await prisma.attendanceCorrection.findUnique({ where: { id } });
+    if (!row || row.userId !== req.user.sub)
+      return res.status(404).json({ message: 'Request not found' });
+    if (row.status !== 'pending')
+      return res.status(400).json({ message: 'Only pending requests can be cancelled' });
+    await prisma.attendanceCorrection.update({ where: { id }, data: { status: 'cancelled' } });
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// GET /api/attendance/admin/corrections?status= — review queue (admin)
+router.get('/admin/corrections', requireRole(ADMIN), async (req, res) => {
+  try {
+    const where = {};
+    if (['pending', 'approved', 'rejected', 'cancelled'].includes(req.query.status))
+      where.status = req.query.status;
+    const requests = await prisma.attendanceCorrection.findMany({
+      where,
+      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+      take: 200,
+      include: {
+        user: { select: { id: true, username: true, fullName: true } },
+        reviewedBy: { select: { fullName: true, username: true } },
+      },
+    });
+    res.json({ requests });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// PATCH /api/attendance/admin/corrections/:id — { status:'approved'|'rejected', reviewNote }
+// Approval APPLIES the correction: creates the day's session if none exists,
+// otherwise fixes the first session's punch-in / last session's punch-out.
+router.patch('/admin/corrections/:id', requireRole(ADMIN), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { status, reviewNote } = req.body || {};
+    if (!['approved', 'rejected'].includes(status))
+      return res.status(400).json({ message: "status must be 'approved' or 'rejected'" });
+
+    const row = await prisma.attendanceCorrection.findUnique({ where: { id } });
+    if (!row) return res.status(404).json({ message: 'Request not found' });
+    if (row.status !== 'pending')
+      return res.status(400).json({ message: `Request is already ${row.status}` });
+
+    if (status === 'approved') {
+      const ymd = new Date(row.date).toISOString().slice(0, 10);
+      const { start, end } = dayWindowIST(ymd);
+      const sessions = await prisma.attendanceSession.findMany({
+        where: { userId: row.userId, punchInTime: { gte: start, lt: end } },
+        orderBy: { punchInTime: 'asc' },
+      });
+
+      if (sessions.length === 0) {
+        if (!row.requestedIn)
+          return res.status(400).json({ message: 'No punch session exists that day — approve needs a punch-in time. Ask the employee to re-raise with punch-in.' });
+        const hours = row.requestedOut ? (row.requestedOut - row.requestedIn) / 3600000 : null;
+        await prisma.attendanceSession.create({
+          data: {
+            userId: row.userId,
+            punchInTime: row.requestedIn,
+            punchOutTime: row.requestedOut,
+            workingHours: hours != null ? Math.round(hours * 100) / 100 : null,
+            isLate: isLateLevel(lateLevelOf(row.requestedIn)),
+            siteName: 'SESS',
+            punchInAddress: 'Added via attendance correction',
+          },
+        });
+      } else {
+        // Punch-in fix -> first session; punch-out fix -> last session.
+        const first = sessions[0];
+        const last = sessions[sessions.length - 1];
+        if (row.requestedIn) {
+          const out = first.punchOutTime || (first.id === last.id ? row.requestedOut : null);
+          if (out && out <= row.requestedIn)
+            return res.status(400).json({ message: 'Requested punch-in is after the existing punch-out' });
+          await prisma.attendanceSession.update({
+            where: { id: first.id },
+            data: {
+              punchInTime: row.requestedIn,
+              isLate: isLateLevel(lateLevelOf(row.requestedIn)),
+              workingHours: out ? Math.round(((out - row.requestedIn) / 3600000) * 100) / 100 : first.workingHours,
+            },
+          });
+        }
+        if (row.requestedOut) {
+          const inT = (first.id === last.id && row.requestedIn) ? row.requestedIn : last.punchInTime;
+          if (row.requestedOut <= inT)
+            return res.status(400).json({ message: 'Requested punch-out is before that session\'s punch-in' });
+          await prisma.attendanceSession.update({
+            where: { id: last.id },
+            data: {
+              punchOutTime: row.requestedOut,
+              workingHours: Math.round(((row.requestedOut - inT) / 3600000) * 100) / 100,
+            },
+          });
+        }
+      }
+    }
+
+    const updated = await prisma.attendanceCorrection.update({
+      where: { id },
+      data: {
+        status,
+        reviewedById: req.user.sub,
+        reviewedAt: new Date(),
+        reviewNote: String(reviewNote || '').trim().slice(0, 500) || null,
+      },
+      include: { user: { select: { id: true, username: true, fullName: true } } },
+    });
+    res.json(updated);
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
 module.exports = router;

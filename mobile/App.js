@@ -14,6 +14,10 @@ import MyAttendanceScreen from './screens/MyAttendanceScreen';
 import TeamAttendanceScreen from './screens/TeamAttendanceScreen';
 import HolidaysScreen from './screens/HolidaysScreen';
 import LeaveScreen from './screens/LeaveScreen';
+import MyProfileScreen from './screens/MyProfileScreen';
+import ChatListScreen from './screens/ChatListScreen';
+import NotificationsScreen from './screens/NotificationsScreen';
+import ChatScreen from './screens/ChatScreen';
 import LeaveApprovalsScreen from './screens/LeaveApprovalsScreen';
 
 const Stack = createNativeStackNavigator();
@@ -64,6 +68,10 @@ export default function App() {
         <Stack.Screen name="TeamAttendance" component={TeamAttendanceScreen} />
         <Stack.Screen name="Holidays" component={HolidaysScreen} />
         <Stack.Screen name="Leave" component={LeaveScreen} />
+        <Stack.Screen name="MyProfile" component={MyProfileScreen} />
+        <Stack.Screen name="ChatList" component={ChatListScreen} />
+        <Stack.Screen name="Notifications" component={NotificationsScreen} />
+        <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="LeaveApprovals" component={LeaveApprovalsScreen} />
       </Stack.Navigator>
     </NavigationContainer>

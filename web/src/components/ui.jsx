@@ -198,9 +198,9 @@ export function Modal({ open, onClose, title, children, footer, width = 'max-w-l
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={cx('relative w-full rounded-2xl bg-white shadow-xl', width)}>
+      <div className={cx('relative flex max-h-[90vh] w-full flex-col rounded-2xl bg-white shadow-xl', width)}>
         {title && (
-          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4">
             <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
             <button
               onClick={onClose}
@@ -213,8 +213,12 @@ export function Modal({ open, onClose, title, children, footer, width = 'max-w-l
             </button>
           </div>
         )}
-        <div className="px-5 py-4">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">{footer}</div>}
+        {/* Body scrolls so tall forms (e.g. the site editor with its map) never
+            push the footer's action buttons off-screen. */}
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && (
+          <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 px-5 py-4">{footer}</div>
+        )}
       </div>
     </div>
   );
