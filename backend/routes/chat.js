@@ -1,4 +1,7 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
@@ -7,6 +10,66 @@ router.use(requireAuth);
 
 const MSG_MAX = 1000;
 const SENDER_SELECT = { select: { id: true, fullName: true, username: true } };
+
+/* ---------------- media uploads (photos / videos from gallery) ---------------- */
+const CHAT_DIR = path.join(__dirname, '..', 'uploads', 'chat');
+fs.mkdirSync(CHAT_DIR, { recursive: true });
+
+const EXT_BY_MIME = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
+  'image/gif': '.gif', 'image/heic': '.heic',
+  'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm',
+  'video/3gpp': '.3gp', 'video/x-matroska': '.mkv',
+};
+
+const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic'];
+const VIDEO_EXT = ['.mp4', '.mov', '.webm', '.3gp', '.mkv'];
+const extOf = (file) =>
+  EXT_BY_MIME[file.mimetype] || path.extname(file.originalname || '').toLowerCase().slice(0, 6);
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, CHAT_DIR),
+    filename: (req, file, cb) => {
+      const ext = extOf(file) || '.bin';
+      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+  fileFilter: (req, file, cb) => {
+    // Accept by mimetype, or by filename extension when the client sends a
+    // generic type (some phones upload as application/octet-stream).
+    const ext = extOf(file);
+    if (/^(image|video)\//.test(file.mimetype) || IMAGE_EXT.includes(ext) || VIDEO_EXT.includes(ext))
+      return cb(null, true);
+    cb(new Error('Only photos and videos can be shared'));
+  },
+});
+
+// POST /api/chat/upload — multipart "file" -> { path, type } for /send
+router.post('/upload', (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'File is too large (max 25 MB)'
+        : err.message || 'Upload failed';
+      return res.status(400).json({ message: msg });
+    }
+    if (!req.file) return res.status(400).json({ message: 'No file received' });
+    const isVideo = req.file.mimetype.startsWith('video/')
+      || VIDEO_EXT.includes(path.extname(req.file.filename).toLowerCase());
+    res.status(201).json({
+      path: 'uploads/chat/' + req.file.filename,
+      type: isVideo ? 'video' : 'image',
+    });
+  });
+});
+
+// Preview label for attachment-only messages in conversation lists.
+const previewOf = (m) =>
+  (m.body && m.body.trim())
+    ? m.body.slice(0, 80)
+    : m.attachmentType === 'video' ? '🎥 Video' : m.attachment ? '📷 Photo' : '';
 
 /* ---------------- membership helper ---------------- */
 async function myMembership(groupId, userId) {
@@ -37,7 +100,10 @@ router.get('/conversations', async (req, res) => {
         where: { groupId: null, OR: [{ senderId: me }, { receiverId: me }] },
         orderBy: { id: 'desc' },
         take: 500,
-        select: { id: true, senderId: true, receiverId: true, body: true, createdAt: true },
+        select: {
+          id: true, senderId: true, receiverId: true, body: true, createdAt: true,
+          attachment: true, attachmentType: true,
+        },
       }),
     ]);
     const dmUnread = new Map(unreadGroupsBySender.map((g) => [g.senderId, g._count._all]));
@@ -58,7 +124,7 @@ router.get('/conversations', async (req, res) => {
         department: u.department,
         unread: dmUnread.get(u.id) || 0,
         lastMessage: last
-          ? { body: last.body.slice(0, 80), mine: last.senderId === me, at: last.createdAt }
+          ? { body: previewOf(last), mine: last.senderId === me, at: last.createdAt }
           : null,
       };
     });
@@ -87,7 +153,7 @@ router.get('/conversations', async (req, res) => {
         unread,
         lastMessage: last
           ? {
-              body: last.body.slice(0, 80),
+              body: previewOf(last),
               mine: last.senderId === me,
               at: last.createdAt,
               senderName: last.sender?.fullName || last.sender?.username,
@@ -243,7 +309,21 @@ router.post('/send', async (req, res) => {
   try {
     const me = req.user.sub;
     const body = String(req.body?.body ?? '').trim();
-    if (!body) return res.status(400).json({ message: 'Message cannot be empty' });
+
+    // Optional media attachment (path must come from OUR /upload endpoint).
+    let attachment = null, attachmentType = null;
+    if (req.body?.attachment) {
+      attachment = String(req.body.attachment);
+      attachmentType = req.body.attachmentType === 'video' ? 'video' : 'image';
+      if (!/^uploads\/chat\/[\w.-]+$/.test(attachment))
+        return res.status(400).json({ message: 'Invalid attachment' });
+      if (!fs.existsSync(path.join(__dirname, '..', attachment)))
+        return res.status(400).json({ message: 'Attachment not found — upload it first' });
+    }
+    if (!body && !attachment)
+      return res.status(400).json({ message: 'Message cannot be empty' });
+
+    const media = { attachment, attachmentType };
 
     const groupId = req.body?.groupId != null ? Number(req.body.groupId) : null;
     if (groupId != null) {
@@ -251,7 +331,7 @@ router.post('/send', async (req, res) => {
       const mem = await myMembership(groupId, me);
       if (!mem) return res.status(403).json({ message: 'You are not a member of this group' });
       const message = await prisma.chatMessage.create({
-        data: { senderId: me, groupId, body: body.slice(0, MSG_MAX) },
+        data: { senderId: me, groupId, body: body.slice(0, MSG_MAX), ...media },
         include: { sender: SENDER_SELECT },
       });
       // The sender has obviously read their own message.
@@ -269,7 +349,7 @@ router.post('/send', async (req, res) => {
     if (!to || !to.isActive) return res.status(404).json({ message: 'Recipient not found' });
 
     const message = await prisma.chatMessage.create({
-      data: { senderId: me, receiverId: toUserId, body: body.slice(0, MSG_MAX) },
+      data: { senderId: me, receiverId: toUserId, body: body.slice(0, MSG_MAX), ...media },
     });
     res.status(201).json(message);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }

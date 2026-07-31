@@ -92,3 +92,26 @@ export async function api(path, options = {}) {
 export const apiGet = (path) => api(path);
 export const apiPost = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
 export const apiPatch = (path, body) => api(path, { method: 'PATCH', body: JSON.stringify(body) });
+
+/**
+ * Multipart upload (photos/videos). Pass a FormData with the file part(s);
+ * Content-Type is set automatically with the multipart boundary.
+ */
+export async function apiUpload(path, formData) {
+  const auth = getStoredAuth();
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      ...(auth?.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
+    },
+    body: formData,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    setStoredAuth(null);
+    if (!location.pathname.startsWith('/login')) location.href = '/login';
+    throw new Error(data.message || 'Session expired. Please sign in again.');
+  }
+  if (!res.ok) throw new Error(data.message || `Upload failed (${res.status})`);
+  return data;
+}

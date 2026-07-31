@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Image,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
@@ -10,58 +10,112 @@ import { saveAuth } from '../lib/auth';
 import { api } from '../lib/api';
 
 const INDIGO = '#1E3A8A';
+const EMPTY_PIN = ['', '', '', ''];
+
+/* Masked 4-digit PIN input row (auto-advance, backspace to previous). */
+function PinRow({ value, setValue, autoFocus = false, onFilled }) {
+  const refs = useRef([]);
+  const onChange = (v, i) => {
+    const d = v.replace(/\D/g, '').slice(-1);
+    const next = [...value];
+    next[i] = d;
+    setValue(next);
+    if (d && i < 3) refs.current[i + 1]?.focus();
+    if (d && i === 3 && onFilled) onFilled(next.join(''));
+  };
+  const onKey = (e, i) => {
+    if (e.nativeEvent.key === 'Backspace' && !value[i] && i > 0) refs.current[i - 1]?.focus();
+  };
+  return (
+    <View style={styles.pinRow}>
+      {value.map((d, i) => (
+        <TextInput
+          key={i}
+          ref={(r) => (refs.current[i] = r)}
+          style={[styles.pinBox, d ? styles.pinBoxFilled : null]}
+          keyboardType="number-pad"
+          maxLength={1}
+          secureTextEntry
+          autoFocus={autoFocus && i === 0}
+          value={d}
+          onChangeText={(v) => onChange(v, i)}
+          onKeyPress={(e) => onKey(e, i)}
+        />
+      ))}
+    </View>
+  );
+}
 
 export default function LoginScreen({ navigation }) {
-  const [mode, setMode] = useState('phone'); // 'phone' | 'otp' | 'admin'
+  const [mode, setMode] = useState('phone'); // 'phone' | 'pin' | 'setpin' | 'admin'
   const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
-  const otpRefs = useRef([]);
-  const [devOtp, setDevOtp] = useState(null);
-  const [timer, setTimer] = useState(0);
+  const [greetName, setGreetName] = useState('');
+  const [isReset, setIsReset] = useState(false); // setpin: first-time vs forgot-PIN
+  const [pin, setPin] = useState(EMPTY_PIN);
+  const [pin2, setPin2] = useState(EMPTY_PIN);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    if (timer <= 0) return;
-    const t = setTimeout(() => setTimer(timer - 1), 1000);
-    return () => clearTimeout(t);
-  }, [timer]);
-
   const finishLogin = async (data) => {
     await saveAuth(data);
     navigation.replace('Dashboard', { fullName: data.fullName, roles: data.roles });
   };
 
-  const requestOtp = async () => {
+  // Step 1 — verify the mobile number is registered, branch on PIN existence.
+  const checkPhone = async () => {
     setError(null);
     const p = phone.replace(/\D/g, '');
     if (p.length !== 10) { setError('Enter a valid 10-digit mobile number'); return; }
     setBusy(true);
     try {
-      const data = await api('/auth/request-otp', {
+      const data = await api('/auth/check-phone', {
         method: 'POST', body: JSON.stringify({ phone: p }),
       });
-      setDevOtp(data.devOtp || null); // dev mode helper — production-la varaadhu
-      setOtp(['', '', '', '', '', '']);
-      setMode('otp');
-      setTimer(30);
-      setTimeout(() => otpRefs.current[0]?.focus(), 400);
+      setGreetName(data.name || '');
+      setPin(EMPTY_PIN);
+      setPin2(EMPTY_PIN);
+      if (data.hasPin) {
+        setMode('pin');
+      } else {
+        setIsReset(false);
+        setMode('setpin'); // first login — user creates their own PIN
+      }
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
 
-  const verifyOtp = async () => {
+  // Step 2a — login with the existing PIN (auto-fires on the 4th digit).
+  const verifyPin = async (code) => {
     setError(null);
-    const code = otp.join('');
-    if (code.length !== 6) { setError('Enter the 6-digit OTP'); return; }
+    const pinCode = code || pin.join('');
+    if (pinCode.length !== 4) { setError('Enter your 4-digit PIN'); return; }
     setBusy(true);
     try {
-      const data = await api('/auth/verify-otp', {
+      const data = await api('/auth/verify-pin', {
         method: 'POST',
-        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), otp: code }),
+        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), pin: pinCode }),
+      });
+      await finishLogin(data);
+    } catch (e) {
+      setError(e.message);
+      setPin(EMPTY_PIN);
+    } finally { setBusy(false); }
+  };
+
+  // Step 2b — create / reset the PIN (enter + confirm), then logged in.
+  const savePin = async () => {
+    setError(null);
+    const p1 = pin.join(''), p2 = pin2.join('');
+    if (p1.length !== 4) { setError('Enter a 4-digit PIN'); return; }
+    if (p2 !== p1) { setError('PINs do not match — try again'); return; }
+    setBusy(true);
+    try {
+      const data = await api('/auth/set-pin', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), pin: p1 }),
       });
       await finishLogin(data);
     } catch (e) { setError(e.message); }
@@ -82,20 +136,14 @@ export default function LoginScreen({ navigation }) {
     finally { setBusy(false); }
   };
 
-  const onOtpChange = (val, i) => {
-    const v = val.replace(/\D/g, '').slice(-1);
-    const next = [...otp];
-    next[i] = v;
-    setOtp(next);
-    if (v && i < 5) otpRefs.current[i + 1]?.focus();
-  };
-
-  const onOtpKey = (e, i) => {
-    if (e.nativeEvent.key === 'Backspace' && !otp[i] && i > 0)
-      otpRefs.current[i - 1]?.focus();
-  };
-
   const switchMode = (m) => { setError(null); setMode(m); };
+  const startForgotPin = () => {
+    setError(null);
+    setIsReset(true);
+    setPin(EMPTY_PIN);
+    setPin2(EMPTY_PIN);
+    setMode('setpin');
+  };
 
   return (
     <View style={{ flex: 1 }}>
@@ -127,7 +175,7 @@ export default function LoginScreen({ navigation }) {
             {mode === 'phone' && (
               <>
                 <Text style={styles.cardTitle}>Welcome 👋</Text>
-                <Text style={styles.cardSub}>Registered mobile number podunga — OTP anupurom</Text>
+                <Text style={styles.cardSub}>Enter your registered mobile number</Text>
 
                 <View style={styles.phoneRow}>
                   <View style={styles.ccChip}><Text style={styles.ccText}>+91</Text></View>
@@ -145,10 +193,10 @@ export default function LoginScreen({ navigation }) {
                 {error && <Text style={styles.error}>{error}</Text>}
 
                 <TouchableOpacity style={[styles.primaryBtn, busy && { opacity: 0.7 }]}
-                  onPress={requestOtp} disabled={busy} activeOpacity={0.85}>
+                  onPress={checkPhone} disabled={busy} activeOpacity={0.85}>
                   {busy ? <ActivityIndicator color="#fff" /> : (
                     <>
-                      <Text style={styles.primaryText}>Get OTP</Text>
+                      <Text style={styles.primaryText}>Continue</Text>
                       <MaterialIcons name="arrow-forward" size={19} color="#fff" />
                     </>
                   )}
@@ -161,53 +209,78 @@ export default function LoginScreen({ navigation }) {
               </>
             )}
 
-            {mode === 'otp' && (
+            {mode === 'pin' && (
               <>
-                <Text style={styles.cardTitle}>Verify OTP 🔐</Text>
-                <Text style={styles.cardSub}>+91 {phone}-ku 6-digit code anuppirukom</Text>
+                <Text style={styles.cardTitle}>Hi {greetName || 'there'} 👋</Text>
+                <Text style={styles.cardSub}>Enter your 4-digit PIN for +91 {phone}</Text>
 
-                <View style={styles.otpRow}>
-                  {otp.map((d, i) => (
-                    <TextInput
-                      key={i}
-                      ref={(r) => (otpRefs.current[i] = r)}
-                      style={[styles.otpBox, d && styles.otpBoxFilled]}
-                      keyboardType="number-pad"
-                      maxLength={1}
-                      value={d}
-                      onChangeText={(v) => onOtpChange(v, i)}
-                      onKeyPress={(e) => onOtpKey(e, i)}
-                    />
-                  ))}
-                </View>
+                <PinRow value={pin} setValue={setPin} autoFocus onFilled={(code) => verifyPin(code)} />
 
-                {devOtp && <Text style={styles.devHint}>Dev OTP: {devOtp}</Text>}
                 {error && <Text style={[styles.error, { alignSelf: 'center' }]}>{error}</Text>}
 
                 <TouchableOpacity style={[styles.primaryBtn, busy && { opacity: 0.7 }]}
-                  onPress={verifyOtp} disabled={busy} activeOpacity={0.85}>
+                  onPress={() => verifyPin()} disabled={busy} activeOpacity={0.85}>
                   {busy ? <ActivityIndicator color="#fff" /> : (
-                    <Text style={styles.primaryText}>Verify & Continue</Text>
+                    <>
+                      <MaterialIcons name="lock-open" size={18} color="#fff" />
+                      <Text style={styles.primaryText}>Unlock</Text>
+                    </>
                   )}
                 </TouchableOpacity>
 
-                <View style={styles.otpFooter}>
+                <View style={styles.pinFooter}>
                   <TouchableOpacity onPress={() => switchMode('phone')}>
                     <Text style={styles.linkText}>Change number</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity disabled={timer > 0} onPress={requestOtp}>
-                    <Text style={[styles.linkText, timer > 0 && { color: '#9CA3AF' }]}>
-                      {timer > 0 ? `Resend in ${timer}s` : 'Resend OTP'}
-                    </Text>
+                  <TouchableOpacity onPress={startForgotPin}>
+                    <Text style={styles.linkText}>Forgot PIN?</Text>
                   </TouchableOpacity>
                 </View>
+              </>
+            )}
+
+            {mode === 'setpin' && (
+              <>
+                <Text style={styles.cardTitle}>{isReset ? 'Reset PIN 🔁' : `Hi ${greetName || 'there'} — create your PIN 🔐`}</Text>
+                <Text style={styles.cardSub}>
+                  {isReset
+                    ? `Set a new 4-digit PIN for +91 ${phone}`
+                    : 'Set a 4-digit PIN — you will use it to login from now on'}
+                </Text>
+
+                <Text style={styles.pinLabel}>NEW PIN</Text>
+                <PinRow value={pin} setValue={setPin} autoFocus />
+
+                <Text style={styles.pinLabel}>CONFIRM PIN</Text>
+                <PinRow value={pin2} setValue={setPin2} />
+
+                {pin2.join('').length === 4 && (
+                  <Text style={[styles.matchHint, { color: pin2.join('') === pin.join('') ? '#16A34A' : '#DC2626' }]}>
+                    {pin2.join('') === pin.join('') ? '✓ PINs match' : '✗ PINs do not match'}
+                  </Text>
+                )}
+                {error && <Text style={[styles.error, { alignSelf: 'center' }]}>{error}</Text>}
+
+                <TouchableOpacity style={[styles.primaryBtn, busy && { opacity: 0.7 }]}
+                  onPress={savePin} disabled={busy} activeOpacity={0.85}>
+                  {busy ? <ActivityIndicator color="#fff" /> : (
+                    <>
+                      <MaterialIcons name="check-circle" size={18} color="#fff" />
+                      <Text style={styles.primaryText}>{isReset ? 'Save New PIN' : 'Save PIN & Continue'}</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => switchMode('phone')} style={styles.linkBtn}>
+                  <Text style={styles.linkText}>Change number</Text>
+                </TouchableOpacity>
               </>
             )}
 
             {mode === 'admin' && (
               <>
                 <Text style={styles.cardTitle}>Admin Login 🛡️</Text>
-                <Text style={styles.cardSub}>Username & password-oda sign in pannunga</Text>
+                <Text style={styles.cardSub}>Sign in with your username & password</Text>
 
                 <View style={styles.inputRow}>
                   <MaterialIcons name="person" size={20} color="#6B7280" style={{ marginRight: 8 }} />
@@ -233,7 +306,7 @@ export default function LoginScreen({ navigation }) {
 
                 <TouchableOpacity onPress={() => switchMode('phone')} style={styles.linkBtn}>
                   <MaterialIcons name="smartphone" size={16} color={INDIGO} />
-                  <Text style={styles.linkText}>Login with OTP instead</Text>
+                  <Text style={styles.linkText}>Login with PIN instead</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -279,14 +352,15 @@ const styles = StyleSheet.create({
     letterSpacing: 1, color: '#111827',
   },
 
-  otpRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  otpBox: {
-    width: 46, height: 54, borderRadius: 12, borderWidth: 1.5, borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB', textAlign: 'center', fontSize: 20, fontWeight: '700', color: '#111827',
+  pinRow: { flexDirection: 'row', justifyContent: 'center', gap: 14, marginBottom: 6 },
+  pinBox: {
+    width: 56, height: 60, borderRadius: 14, borderWidth: 1.5, borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB', textAlign: 'center', fontSize: 24, fontWeight: '800', color: '#111827',
   },
-  otpBoxFilled: { borderColor: INDIGO, backgroundColor: '#EEF2FF' },
-  devHint: { alignSelf: 'center', color: '#16A34A', fontSize: 12, fontWeight: '700', marginTop: 6 },
-  otpFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
+  pinBoxFilled: { borderColor: INDIGO, backgroundColor: '#EEF2FF' },
+  pinLabel: { fontSize: 10.5, fontWeight: '800', color: '#9CA3AF', letterSpacing: 0.7, marginTop: 10, marginBottom: 8, alignSelf: 'center' },
+  matchHint: { alignSelf: 'center', fontSize: 12.5, fontWeight: '800', marginTop: 6 },
+  pinFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
 
   inputRow: {
     flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E5E7EB',

@@ -10,7 +10,7 @@ import TeamTrail from './pages/TeamTrail';
 import Holidays from './pages/Holidays';
 import Leaves from './pages/Leaves';
 import Sites from './pages/Sites';
-import Reports from './pages/Reports';
+// import Reports from './pages/Reports';
 import Chat from './pages/Chat';
 
 export default function App() {
@@ -29,7 +29,7 @@ export default function App() {
               <Route path="/holidays" element={<Holidays />} />
               <Route path="/leaves" element={<Leaves />} />
               <Route path="/sites" element={<Sites />} />
-              <Route path="/reports" element={<Reports />} />
+              {/* <Route path="/reports" element={<Reports />} /> */}
               <Route path="/chat" element={<Chat />} />
             </Route>
           </Route>

@@ -17,6 +17,7 @@ model User {
   roles        UserRole[]
   attendance   AttendanceSession[]
   phone        String?    @unique
+  pinHash      String?    @map("pin_hash") // 4-digit login PIN (bcrypt)
   locationLogs LocationLog[]
   leaveRequests  LeaveRequest[] @relation("userLeaves")
   reviewedLeaves LeaveRequest[] @relation("reviewedLeaves")
@@ -70,6 +71,8 @@ model ChatMessage {
   receiverId Int?      @map("receiver_id")
   groupId    Int?      @map("group_id")
   body       String
+  attachment     String? // uploads/chat/<file> — photo or video shared from gallery
+  attachmentType String? @map("attachment_type") // image | video
   readAt     DateTime? @map("read_at") // DM read receipt; groups use lastReadId
   createdAt  DateTime  @default(now()) @map("created_at")
   sender     User       @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)

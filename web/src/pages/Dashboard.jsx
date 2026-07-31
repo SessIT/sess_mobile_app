@@ -40,7 +40,7 @@ function CelebrationsStrip() {
 
   useEffect(() => {
     let alive = true;
-    apiGet('/reports/upcoming?days=30')
+    apiGet('/reports/upcoming?days=7')
       .then((r) => alive && setEvents(r.events || []))
       .catch(() => { if (alive) { setFailed(true); setEvents([]); } }); // never blocks the dashboard
     return () => { alive = false; };
@@ -51,10 +51,10 @@ function CelebrationsStrip() {
   // Empty state — tell the admin what feeds this strip instead of hiding it.
   if (events.length === 0) {
     return (
-      <div className="flex items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-4">
+      <div className="flex items-center gap-3 px-5 py-4 border border-dashed rounded-2xl border-slate-300 bg-slate-50">
         <span className="text-xl">🎂</span>
         <div>
-          <p className="text-sm font-semibold text-slate-700">No celebrations in the next 30 days</p>
+          <p className="text-sm font-semibold text-slate-700">No celebrations in the next 1 week</p>
           <p className="text-xs text-slate-400">
             Birthdays and work anniversaries appear here automatically — add each employee's
             <b> Date of birth</b> and <b>Date of joining</b> in User Management → Edit.
@@ -67,15 +67,15 @@ function CelebrationsStrip() {
   return (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-brand-900 via-brand-800 to-[#312E81] p-5 shadow-lg">
       {/* soft glow decorations */}
-      <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-brand-400/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-fuchsia-400/10 blur-3xl" />
+      <div className="absolute w-48 h-48 rounded-full pointer-events-none -right-16 -top-16 bg-brand-400/20 blur-3xl" />
+      <div className="absolute w-40 h-40 rounded-full pointer-events-none -bottom-20 left-1/3 bg-fuchsia-400/10 blur-3xl" />
 
-      <div className="relative z-10 mb-3 flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-brand-100">
-          <IconSparkles className="h-4 w-4 text-amber-300" />
+      <div className="relative z-10 flex items-center justify-between mb-3">
+        <h2 className="flex items-center gap-2 text-sm font-bold tracking-widest uppercase text-brand-100">
+          <IconSparkles className="w-4 h-4 text-amber-300" />
           Upcoming celebrations
         </h2>
-        <span className="text-[11px] font-medium text-brand-300/80">next 30 days</span>
+        <span className="text-[11px] font-medium text-brand-300/80">next 7 days</span>
       </div>
 
       <div className="relative z-10 flex gap-3 overflow-x-auto pb-1 [scrollbar-width:thin]">
@@ -94,15 +94,15 @@ function CelebrationsStrip() {
               }`}
             >
               <div className="relative">
-                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-extrabold text-white ring-2 ring-white/20">
+                <span className="flex items-center justify-center text-sm font-extrabold text-white rounded-full h-11 w-11 bg-gradient-to-br from-brand-400 to-brand-600 ring-2 ring-white/20">
                   {initialsOf(e.fullName || e.username)}
                 </span>
                 <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white text-[13px] shadow">
                   {e.type === 'birthday' ? '🎂' : '🏆'}
                 </span>
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-white">{e.fullName || e.username}</p>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-white truncate">{e.fullName || e.username}</p>
                 <p className="truncate text-[11px] text-brand-200/90">
                   {e.type === 'birthday'
                     ? 'Birthday'
@@ -220,30 +220,30 @@ export default function Dashboard() {
               label="Present today"
               value={present.length}
               tone="green"
-              icon={<IconCheckCircle className="h-5 w-5" />}
+              icon={<IconCheckCircle className="w-5 h-5" />}
               sub={openNow.length ? `${openNow.length} still punched in` : 'All punched out'}
             />
             <StatCard
               label="Late arrivals"
               value={lateCount}
               tone="amber"
-              icon={<IconClock className="h-5 w-5" />}
+              icon={<IconClock className="w-5 h-5" />}
               sub={present.length ? `of ${present.length} present` : undefined}
             />
-            <StatCard label="Absent" value={absent.length} tone="red" icon={<IconBan className="h-5 w-5" />} />
+            <StatCard label="Absent" value={absent.length} tone="red" icon={<IconBan className="w-5 h-5" />} />
             <StatCard
               label="Total employees"
               value={data?.totalUsers ?? 0}
               tone="blue"
-              icon={<IconUsers className="h-5 w-5" />}
+              icon={<IconUsers className="w-5 h-5" />}
             />
           </div>
 
           {/* --------------------------------------- Currently punched in */}
           <Card>
             <CardBody>
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold tracking-wide uppercase text-slate-500">
                   Currently punched in
                 </h2>
                 <Badge tone={openNow.length ? 'green' : 'slate'}>{openNow.length}</Badge>
@@ -260,11 +260,11 @@ export default function Dashboard() {
                   {openNow.map((p) => (
                     <div
                       key={p.userId}
-                      className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 py-1 pl-3 pr-2 text-sm"
+                      className="flex items-center gap-2 py-1 pl-3 pr-2 text-sm border rounded-full border-emerald-200 bg-emerald-50"
                     >
-                      <span className="relative flex h-2 w-2">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                      <span className="relative flex w-2 h-2">
+                        <span className="absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping bg-emerald-400" />
+                        <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500" />
                       </span>
                       <span className="font-medium text-slate-800">
                         {p.fullName || p.username}
@@ -283,7 +283,7 @@ export default function Dashboard() {
             {/* Present table (spans 2 cols on large screens) */}
             <Card className="lg:col-span-2">
               <CardBody>
-                <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-semibold text-slate-800">Present</h2>
                   <Badge tone="green">{present.length}</Badge>
                 </div>
@@ -298,11 +298,11 @@ export default function Dashboard() {
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[640px] text-left text-sm">
                       <thead>
-                        <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
+                        <tr className="text-xs tracking-wide uppercase border-b border-slate-200 text-slate-400">
                           <th className="px-3 py-2 font-medium">Name</th>
                           <th className="px-3 py-2 font-medium">First In</th>
                           <th className="px-3 py-2 font-medium">Last Out</th>
-                          <th className="px-3 py-2 text-center font-medium">Sessions</th>
+                          <th className="px-3 py-2 font-medium text-center">Sessions</th>
                           <th className="px-3 py-2 font-medium">Hours</th>
                           <th className="px-3 py-2 font-medium">Status</th>
                         </tr>
@@ -352,7 +352,7 @@ export default function Dashboard() {
             {/* Absent list */}
             <Card>
               <CardBody>
-                <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-semibold text-slate-800">
                     Absent ({absent.length})
                   </h2>
@@ -365,14 +365,14 @@ export default function Dashboard() {
                   <ul className="divide-y divide-slate-100">
                     {absent.map((u) => (
                       <li key={u.id} className="flex items-center gap-3 py-2.5">
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500">
+                        <span className="flex items-center justify-center w-8 h-8 text-xs font-semibold rounded-full shrink-0 bg-slate-100 text-slate-500">
                           {(u.fullName || u.username || '?').charAt(0).toUpperCase()}
                         </span>
                         <div className="min-w-0">
-                          <div className="truncate font-medium text-slate-800">
+                          <div className="font-medium truncate text-slate-800">
                             {u.fullName || u.username}
                           </div>
-                          <div className="truncate text-xs text-slate-400">@{u.username}</div>
+                          <div className="text-xs truncate text-slate-400">@{u.username}</div>
                         </div>
                       </li>
                     ))}

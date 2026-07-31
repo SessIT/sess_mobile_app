@@ -15,7 +15,32 @@ import {
   Modal,
   Spinner,
 } from '../components/ui';
-import { IconUserPlus, IconUserCircle, IconSearch, IconEdit } from '../components/icons';
+import { IconUserPlus, IconUserCircle, IconSearch, IconEdit, IconEye, IconEyeOff } from '../components/icons';
+
+/* Password input with a visibility (eye) toggle. */
+function PasswordInput({ value, onChange, placeholder = '••••••••', shown, onToggle, autoComplete = 'new-password' }) {
+  return (
+    <div className="relative">
+      <Input
+        type={shown ? 'text' : 'password'}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className="pr-10"
+      />
+      <button
+        type="button"
+        onClick={onToggle}
+        tabIndex={-1}
+        title={shown ? 'Hide password' : 'Show password'}
+        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition hover:text-slate-600"
+      >
+        {shown ? <IconEyeOff className="h-4 w-4" /> : <IconEye className="h-4 w-4" />}
+      </button>
+    </div>
+  );
+}
 
 // User management — list every account, create new ones, toggle active status.
 export default function Users() {
@@ -358,6 +383,8 @@ function CreateUserModal({ open, roles, users, onClose, onCreated }) {
   const [username, setUsername] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [roleName, setRoleName] = useState('');
   const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [busy, setBusy] = useState(false);
@@ -371,6 +398,8 @@ function CreateUserModal({ open, roles, users, onClose, onCreated }) {
       setUsername('');
       setPhone('');
       setPassword('');
+      setConfirm('');
+      setShowPw(false);
       setRoleName(roles[0] || '');
       setProfile(EMPTY_PROFILE);
       setError('');
@@ -379,8 +408,8 @@ function CreateUserModal({ open, roles, users, onClose, onCreated }) {
   }, [open, roles]);
 
   const canSubmit =
-    fullName.trim() && username.trim() && password.length >= 6 && roleName &&
-    (!phone || phone.length === 10) && !busy;
+    fullName.trim() && username.trim() && password.length >= 6 && password === confirm &&
+    roleName && (!phone || phone.length === 10) && !busy;
 
   const submit = async (e) => {
     e?.preventDefault();
@@ -395,6 +424,10 @@ function CreateUserModal({ open, roles, users, onClose, onCreated }) {
     }
     if (password.length < 6) {
       setError('Password must be at least 6 characters.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('Passwords do not match.');
       return;
     }
     setBusy(true);
@@ -475,12 +508,23 @@ function CreateUserModal({ open, roles, users, onClose, onCreated }) {
         </Field>
 
         <Field label="Password" hint="Minimum 6 characters.">
-          <Input
-            type="password"
+          <PasswordInput
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            autoComplete="new-password"
+            shown={showPw}
+            onToggle={() => setShowPw((v) => !v)}
+          />
+        </Field>
+
+        <Field
+          label="Confirm password"
+          hint={confirm && password !== confirm ? '✗ Passwords do not match' : confirm ? '✓ Passwords match' : 'Re-enter the same password.'}
+        >
+          <PasswordInput
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            shown={showPw}
+            onToggle={() => setShowPw((v) => !v)}
           />
         </Field>
 
@@ -494,7 +538,6 @@ function CreateUserModal({ open, roles, users, onClose, onCreated }) {
             ))}
           </Select>
         </Field>
-        <div /> {/* grid filler */}
 
         <ProfileFields form={profile} set={setProf} managers={users} selfId={null} />
 
@@ -513,6 +556,7 @@ function EditUserModal({ user, roles, users, onClose, onUpdated }) {
   const [phone, setPhone] = useState('');
   const [roleName, setRoleName] = useState('');
   const [password, setPassword] = useState(''); // blank = keep current
+  const [showResetPw, setShowResetPw] = useState(false);
   const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -526,6 +570,7 @@ function EditUserModal({ user, roles, users, onClose, onUpdated }) {
       setPhone(user.phone || '');
       setRoleName(user.roles?.[0] || roles[0] || '');
       setPassword('');
+      setShowResetPw(false);
       setProfile(profileFromUser(user));
       setError('');
       setBusy(false);
@@ -626,12 +671,11 @@ function EditUserModal({ user, roles, users, onClose, onUpdated }) {
         </Field>
 
         <Field label="Reset password" hint="Leave blank to keep the current password.">
-          <Input
-            type="password"
+          <PasswordInput
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            autoComplete="new-password"
+            shown={showResetPw}
+            onToggle={() => setShowResetPw((v) => !v)}
           />
         </Field>
         <div /> {/* grid filler */}

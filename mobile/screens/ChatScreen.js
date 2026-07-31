@@ -2,12 +2,16 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput,
   ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
+  Image, Modal, Linking,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { api } from '../lib/api';
+import * as ImagePicker from 'expo-image-picker';
+import { File } from 'expo-file-system';
+import { api, apiUpload, API_URL } from '../lib/api';
 
+const BASE = API_URL.replace('/api', '');
 const INDIGO = '#1E3A8A';
 const POLL_MS = 4000;
 const NAME_COLORS = ['#4F46E5', '#0891B2', '#16A34A', '#D97706', '#DC2626', '#7C3AED', '#DB2777'];
@@ -36,6 +40,10 @@ export default function ChatScreen({ route, navigation }) {
   const [groupInfo, setGroupInfo] = useState(group);
   const [text, setText] = useState(route.params?.prefill || '');
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false); // media upload in flight
+  const [pendingMedia, setPendingMedia] = useState(null); // asset awaiting preview-confirm
+  const [mediaCaption, setMediaCaption] = useState('');
+  const [viewer, setViewer] = useState(null); // full-screen image URL
   const [notAtBottom, setNotAtBottom] = useState(false);
 
   const lastIdRef = useRef(0);
@@ -113,6 +121,77 @@ export default function ChatScreen({ route, navigation }) {
       mergeIn([msg], { fromMe: true });
     } catch (e) { Alert.alert('Could not send', e.message); }
     finally { setSending(false); }
+  };
+
+  /* ---------- media: pick / shoot -> WhatsApp-style preview -> send ---------- */
+  const stageMedia = (asset) => {
+    if (asset.fileSize && asset.fileSize > 25 * 1024 * 1024) {
+      Alert.alert('Too large', 'Please pick a file under 25 MB.');
+      return;
+    }
+    setMediaCaption(text.trim()); // typed text carries over as the caption
+    setPendingMedia(asset);
+  };
+
+  const pickFromGallery = async () => {
+    if (uploading) return;
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow gallery access to share photos and videos.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets?.length) stageMedia(result.assets[0]);
+  };
+
+  const takePhoto = async () => {
+    if (uploading) return;
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow camera access to take a photo.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets?.length) stageMedia(result.assets[0]);
+  };
+
+  // Confirmed in the preview — upload then send with the caption.
+  const sendPendingMedia = async () => {
+    const asset = pendingMedia;
+    if (!asset || uploading) return;
+    setUploading(true);
+    try {
+      // SDK 57: the WinterCG fetch only accepts real Blob/File parts — the
+      // expo-file-system File class wraps the picked URI as a proper Blob.
+      const form = new FormData();
+      const file = new File(asset.uri);
+      form.append(
+        'file',
+        file,
+        asset.fileName || `media${asset.type === 'video' ? '.mp4' : '.jpg'}`
+      );
+      const up = await apiUpload('/chat/upload', form);
+      const msg = await api('/chat/send', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...(isGroup ? { groupId: group.id } : { toUserId: other.id }),
+          body: mediaCaption.trim(),
+          attachment: up.path,
+          attachmentType: up.type,
+        }),
+      });
+      setPendingMedia(null);
+      setMediaCaption('');
+      setText('');
+      mergeIn([msg], { fromMe: true });
+    } catch (e) { Alert.alert('Could not share', e.message); }
+    finally { setUploading(false); }
   };
 
   const isMine = (m) => (meId != null ? m.senderId === meId : (!isGroup && m.senderId !== other.id));
@@ -230,7 +309,27 @@ export default function ChatScreen({ route, navigation }) {
                           {senderName}
                         </Text>
                       ) : null}
-                      <Text style={[styles.bubbleText, mine && { color: '#fff' }]}>{renderBody(r.body, mine)}</Text>
+                      {r.attachment ? (
+                        r.attachmentType === 'video' ? (
+                          <TouchableOpacity
+                            style={styles.mediaVideo}
+                            activeOpacity={0.85}
+                            onPress={() => Linking.openURL(`${BASE}/${r.attachment}`)}
+                          >
+                            <MaterialIcons name="play-circle-filled" size={42} color="#fff" />
+                            <Text style={styles.mediaVideoText}>Video · tap to play</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <TouchableOpacity activeOpacity={0.9} onPress={() => setViewer(`${BASE}/${r.attachment}`)}>
+                            <Image source={{ uri: `${BASE}/${r.attachment}` }} style={styles.mediaImage} />
+                          </TouchableOpacity>
+                        )
+                      ) : null}
+                      {r.body ? (
+                        <Text style={[styles.bubbleText, mine && { color: '#fff' }, r.attachment && { marginTop: 6 }]}>
+                          {renderBody(r.body, mine)}
+                        </Text>
+                      ) : null}
                       <View style={styles.metaRow}>
                         <Text style={[styles.metaText, mine && { color: 'rgba(255,255,255,0.75)' }]}>{fmtT(r.createdAt)}</Text>
                         {mine && !isGroup && (
@@ -269,9 +368,15 @@ export default function ChatScreen({ route, navigation }) {
 
         {/* Composer */}
         <View style={styles.composer}>
+          <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={pickFromGallery}>
+            <MaterialIcons name="photo-library" size={21} color={INDIGO} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={takePhoto}>
+            <MaterialIcons name="photo-camera" size={21} color={INDIGO} />
+          </TouchableOpacity>
           <TextInput
             style={styles.input}
-            placeholder="Type a message…"
+            placeholder={uploading ? 'Sharing media…' : 'Type a message…'}
             placeholderTextColor="#9CA3AF"
             value={text}
             onChangeText={setText}
@@ -286,6 +391,79 @@ export default function ChatScreen({ route, navigation }) {
             {sending ? <ActivityIndicator color="#fff" size="small" /> : <MaterialIcons name="send" size={20} color="#fff" />}
           </TouchableOpacity>
         </View>
+
+        {/* WhatsApp-style media preview: confirm + caption BEFORE sending */}
+        <Modal
+          visible={!!pendingMedia}
+          transparent
+          animationType="slide"
+          onRequestClose={() => !uploading && setPendingMedia(null)}
+        >
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <View style={styles.previewOverlay}>
+              {/* Header */}
+              <View style={styles.previewHead}>
+                <TouchableOpacity
+                  style={styles.previewClose}
+                  disabled={uploading}
+                  onPress={() => { setPendingMedia(null); setMediaCaption(''); }}
+                >
+                  <MaterialIcons name="close" size={24} color="#fff" />
+                </TouchableOpacity>
+                <Text style={styles.previewTitle}>
+                  Send to {isGroup ? (groupInfo?.name || group.name) : (other?.fullName || other?.username)}
+                </Text>
+              </View>
+
+              {/* Media */}
+              <View style={styles.previewBody}>
+                {pendingMedia?.type === 'video' ? (
+                  <View style={styles.previewVideo}>
+                    <MaterialIcons name="play-circle-filled" size={64} color="#fff" />
+                    <Text style={styles.previewVideoText}>
+                      Video ready{pendingMedia?.fileSize ? ` · ${(pendingMedia.fileSize / (1024 * 1024)).toFixed(1)} MB` : ''}
+                    </Text>
+                  </View>
+                ) : pendingMedia ? (
+                  <Image source={{ uri: pendingMedia.uri }} style={styles.previewImage} resizeMode="contain" />
+                ) : null}
+              </View>
+
+              {/* Caption + send */}
+              <View style={styles.previewFoot}>
+                <TextInput
+                  style={styles.previewCaption}
+                  placeholder="Add a caption…"
+                  placeholderTextColor="rgba(255,255,255,0.55)"
+                  value={mediaCaption}
+                  onChangeText={setMediaCaption}
+                  multiline
+                  maxLength={1000}
+                  editable={!uploading}
+                />
+                <TouchableOpacity
+                  style={[styles.previewSend, uploading && { opacity: 0.6 }]}
+                  disabled={uploading}
+                  onPress={sendPendingMedia}
+                >
+                  {uploading
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <MaterialIcons name="send" size={22} color="#fff" />}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Full-screen image viewer */}
+        <Modal visible={!!viewer} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
+          <View style={styles.viewerOverlay}>
+            <TouchableOpacity style={styles.viewerClose} onPress={() => setViewer(null)}>
+              <MaterialIcons name="close" size={26} color="#fff" />
+            </TouchableOpacity>
+            {viewer && <Image source={{ uri: viewer }} style={styles.viewerImage} resizeMode="contain" />}
+          </View>
+        </Modal>
       </View>
     </KeyboardAvoidingView>
   );
@@ -326,6 +504,25 @@ const styles = StyleSheet.create({
   jumpFab: { position: 'absolute', right: 14, bottom: 12, width: 42, height: 42, borderRadius: 21, backgroundColor: INDIGO, justifyContent: 'center', alignItems: 'center', elevation: 4, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } },
 
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB' },
+  attachBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
+  mediaImage: { width: 210, height: 210, borderRadius: 12, backgroundColor: '#E5E7EB' },
+  mediaVideo: { width: 210, height: 130, borderRadius: 12, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', gap: 4 },
+  mediaVideoText: { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '700' },
+  previewOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.96)' },
+  previewHead: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 50, paddingHorizontal: 16, paddingBottom: 10 },
+  previewClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center' },
+  previewTitle: { flex: 1, color: '#fff', fontSize: 14.5, fontWeight: '800' },
+  previewBody: { flex: 1, justifyContent: 'center', paddingHorizontal: 10 },
+  previewImage: { width: '100%', height: '100%' },
+  previewVideo: { alignItems: 'center', gap: 10 },
+  previewVideoText: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '700' },
+  previewFoot: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, padding: 12, paddingBottom: 26 },
+  previewCaption: { flex: 1, maxHeight: 100, backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 11, fontSize: 14.5, color: '#fff' },
+  previewSend: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#16A34A', justifyContent: 'center', alignItems: 'center', elevation: 3 },
+
+  viewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' },
+  viewerClose: { position: 'absolute', top: 48, right: 18, zIndex: 2, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
+  viewerImage: { width: '100%', height: '80%' },
   input: { flex: 1, maxHeight: 110, backgroundColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9, fontSize: 14, color: '#111827' },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: INDIGO, justifyContent: 'center', alignItems: 'center' },
 });

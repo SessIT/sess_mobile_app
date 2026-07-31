@@ -24,7 +24,7 @@ const NAV = [
   { to: '/holidays', label: 'Holidays', icon: IconGift },
   { to: '/leaves', label: 'Leave Management', icon: IconLeave },
   { to: '/sites', label: 'Customer Sites', icon: IconMapPin },
-  { to: '/reports', label: 'Reports', icon: IconChart },
+  // { to: '/reports', label: 'Reports', icon: IconChart },
   { to: '/chat', label: 'Team Chat', icon: IconChat },
 ];
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { apiGet, apiPost } from '../lib/api';
+import { apiGet, apiPost, apiUpload, fileUrl } from '../lib/api';
 import {
   Card,
   Button,
@@ -14,7 +14,7 @@ import {
   Spinner,
   cx,
 } from '../components/ui';
-import { IconChat, IconSearch, IconUsers, IconPlus } from '../components/icons';
+import { IconChat, IconSearch, IconUsers, IconPlus, IconImage } from '../components/icons';
 
 const POLL_THREAD_MS = 4000;
 const POLL_LIST_MS = 15000;
@@ -60,12 +60,14 @@ export default function Chat() {
   const [members, setMembers] = useState([]); // group members for @mentions
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [notAtBottom, setNotAtBottom] = useState(false);
 
   const lastIdRef = useRef(0);
   const scrollerRef = useRef(null);
   const atBottomRef = useRef(true);
   const prefRef = useRef(false);
+  const fileRef = useRef(null);
 
   const loadConvos = useCallback(() => {
     apiGet('/chat/conversations')
@@ -177,6 +179,41 @@ export default function Chat() {
       setError(e.message || 'Could not send');
     } finally {
       setSending(false);
+    }
+  };
+
+  // Share a photo/video from the file picker (typed text becomes the caption).
+  const sendMedia = async (file) => {
+    if (!file || !active || uploading) return;
+    if (!/^(image|video)\//.test(file.type)) {
+      setError('Only photos and videos can be shared.');
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setError('File is too large (max 25 MB).');
+      return;
+    }
+    setUploading(true);
+    setError('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const up = await apiUpload('/chat/upload', form);
+      const payload = {
+        ...(active.kind === 'group' ? { groupId: active.id } : { toUserId: active.id }),
+        body: text.trim(),
+        attachment: up.path,
+        attachmentType: up.type,
+      };
+      const msg = await apiPost('/chat/send', payload);
+      setText('');
+      mergeIn([msg], { fromMe: true });
+      loadConvos();
+    } catch (e) {
+      setError(e.message || 'Could not share the file.');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
@@ -370,7 +407,25 @@ export default function Chat() {
                                   {r.sender.fullName || r.sender.username}
                                 </p>
                               )}
-                              <p className="whitespace-pre-wrap break-words">{renderBody(r.body, isMine(r))}</p>
+                              {r.attachment && (
+                                r.attachmentType === 'video' ? (
+                                  <video
+                                    controls
+                                    src={fileUrl(r.attachment)}
+                                    className="mb-1 max-h-64 w-full max-w-[280px] rounded-lg bg-slate-900"
+                                  />
+                                ) : (
+                                  <img
+                                    src={fileUrl(r.attachment)}
+                                    alt="shared media"
+                                    onClick={() => window.open(fileUrl(r.attachment), '_blank')}
+                                    className="mb-1 max-h-64 w-full max-w-[240px] cursor-pointer rounded-lg object-cover"
+                                  />
+                                )
+                              )}
+                              {r.body && (
+                                <p className="whitespace-pre-wrap break-words">{renderBody(r.body, isMine(r))}</p>
+                              )}
                               <p className={cx('mt-0.5 text-right text-[10px]', isMine(r) ? 'text-brand-200' : 'text-slate-400')}>
                                 {fmtClock(r.createdAt)}
                                 {isMine(r) && active.kind === 'user' && (r.readAt ? ' ✓✓' : ' ✓')}
@@ -417,13 +472,30 @@ export default function Chat() {
                       ))}
                     </div>
                   )}
+                  {/* Attach photo / video from gallery */}
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*,video/*"
+                    className="hidden"
+                    onChange={(e) => sendMedia(e.target.files?.[0])}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    disabled={uploading}
+                    title="Share a photo or video"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700 transition hover:bg-brand-100 disabled:opacity-50"
+                  >
+                    {uploading ? <Spinner className="h-4 w-4 text-brand-700" /> : <IconImage className="h-5 w-5" />}
+                  </button>
                   <textarea
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
                     }}
-                    placeholder="Type a message… (Enter to send)"
+                    placeholder={uploading ? 'Sharing media…' : 'Type a message… (Enter to send)'}
                     rows={1}
                     maxLength={1000}
                     className="max-h-28 flex-1 resize-none rounded-xl border border-slate-300/90 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10"
