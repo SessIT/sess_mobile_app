@@ -3,9 +3,9 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'rea
 import { StatusBar } from 'expo-status-bar';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { clearAuth } from '../lib/auth';
 import { api } from '../lib/api';
 import { ensurePunchReminders, onNotificationTap } from '../lib/notifications';
+import { BottomNav } from '../components/ui';
 
 const INDIGO = '#1E3A8A';
 const ADMIN = 'Technical Director / Admin';
@@ -16,154 +16,154 @@ const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(
 /* Compact holiday widget — shows the next upcoming holiday and opens the full
  * Holidays screen (upcoming-first) on tap. Fails silently so the dashboard is
  * never blocked by this call. */
-function HolidayWidget({ navigation }) {
-  const [next, setNext] = useState(null);
-  const [loading, setLoading] = useState(true);
+// function HolidayWidget({ navigation }) {
+//   const [next, setNext] = useState(null);
+//   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await api('/holidays/upcoming?limit=1');
-        if (alive) setNext(res.holidays?.[0] || null);
-      } catch {
-        if (alive) setNext(null);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => { alive = false; };
-  }, []);
+//   useEffect(() => {
+//     let alive = true;
+//     (async () => {
+//       try {
+//         const res = await api('/holidays/upcoming?limit=1');
+//         if (alive) setNext(res.holidays?.[0] || null);
+//       } catch {
+//         if (alive) setNext(null);
+//       } finally {
+//         if (alive) setLoading(false);
+//       }
+//     })();
+//     return () => { alive = false; };
+//   }, []);
 
-  const d = next ? new Date(next.date) : null;
-  const until = d ? Math.round((new Date(d.toISOString().slice(0, 10) + 'T00:00:00Z') - new Date(todayYMD() + 'T00:00:00Z')) / 86400000) : null;
-  const away = until === 0 ? 'Today' : until === 1 ? 'Tomorrow' : `in ${until} days`;
+//   const d = next ? new Date(next.date) : null;
+//   const until = d ? Math.round((new Date(d.toISOString().slice(0, 10) + 'T00:00:00Z') - new Date(todayYMD() + 'T00:00:00Z')) / 86400000) : null;
+//   const away = until === 0 ? 'Today' : until === 1 ? 'Tomorrow' : `in ${until} days`;
 
-  return (
-    <TouchableOpacity activeOpacity={0.85} onPress={() => navigation.navigate('Holidays')}>
-      <LinearGradient
-        colors={['#4F46E5', '#4338CA']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.widget}
-      >
-        <View style={styles.widgetIcon}>
-          <MaterialIcons name="celebration" size={24} color="#fff" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.widgetLabel}>NEXT HOLIDAY</Text>
-          {loading ? (
-            <Text style={styles.widgetName}>Loading…</Text>
-          ) : next ? (
-            <>
-              <Text style={styles.widgetName} numberOfLines={1}>{next.name}</Text>
-              <Text style={styles.widgetSub}>
-                {d.getUTCDate()} {MONTHS[d.getUTCMonth()]} {d.getUTCFullYear()} · {away}
-              </Text>
-            </>
-          ) : (
-            <Text style={styles.widgetName}>No upcoming holidays</Text>
-          )}
-        </View>
-        <MaterialIcons name="chevron-right" size={26} color="rgba(255,255,255,0.85)" />
-      </LinearGradient>
-    </TouchableOpacity>
-  );
-}
+//   return (
+//     <TouchableOpacity activeOpacity={0.85} onPress={() => navigation.navigate('Holidays')}>
+//       <LinearGradient
+//         colors={['#4F46E5', '#4338CA']}
+//         start={{ x: 0, y: 0 }}
+//         end={{ x: 1, y: 1 }}
+//         style={styles.widget}
+//       >
+//         <View style={styles.widgetIcon}>
+//           <MaterialIcons name="celebration" size={24} color="#fff" />
+//         </View>
+//         <View style={{ flex: 1 }}>
+//           <Text style={styles.widgetLabel}>NEXT HOLIDAY</Text>
+//           {loading ? (
+//             <Text style={styles.widgetName}>Loading…</Text>
+//           ) : next ? (
+//             <>
+//               <Text style={styles.widgetName} numberOfLines={1}>{next.name}</Text>
+//               <Text style={styles.widgetSub}>
+//                 {d.getUTCDate()} {MONTHS[d.getUTCMonth()]} {d.getUTCFullYear()} · {away}
+//               </Text>
+//             </>
+//           ) : (
+//             <Text style={styles.widgetName}>No upcoming holidays</Text>
+//           )}
+//         </View>
+//         <MaterialIcons name="chevron-right" size={26} color="rgba(255,255,255,0.85)" />
+//       </LinearGradient>
+//     </TouchableOpacity>
+//   );
+// }
 
 /* Upcoming birthdays & work anniversaries (next 30 days) — a horizontal strip
  * of celebration cards. Hides itself entirely when there is nothing coming up
  * or the call fails, so the dashboard is never blocked. */
-function CelebrationsWidget({ navigation }) {
-  const [events, setEvents] = useState(null);
+// function CelebrationsWidget({ navigation }) {
+//   const [events, setEvents] = useState(null);
 
-  useEffect(() => {
-    let alive = true;
-    api('/reports/upcoming?days=30')
-      .then((r) => { if (alive) setEvents(r.events || []); })
-      .catch(() => { if (alive) setEvents([]); });
-    return () => { alive = false; };
-  }, []);
+//   useEffect(() => {
+//     let alive = true;
+//     api('/reports/upcoming?days=30')
+//       .then((r) => { if (alive) setEvents(r.events || []); })
+//       .catch(() => { if (alive) setEvents([]); });
+//     return () => { alive = false; };
+//   }, []);
 
-  if (!events || events.length === 0) return null;
+//   if (!events || events.length === 0) return null;
 
-  const initials = (n) => (n || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  const when = (d) => (d === 0 ? '🎉 TODAY' : d === 1 ? 'Tomorrow' : `in ${d} days`);
-  const prettyDay = (ymd) => `${Number(ymd.slice(8, 10))} ${MONTHS[Number(ymd.slice(5, 7)) - 1]}`;
+//   const initials = (n) => (n || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+//   const when = (d) => (d === 0 ? '🎉 TODAY' : d === 1 ? 'Tomorrow' : `in ${d} days`);
+//   const prettyDay = (ymd) => `${Number(ymd.slice(8, 10))} ${MONTHS[Number(ymd.slice(5, 7)) - 1]}`;
 
-  return (
-    <View style={{ marginBottom: 6 }}>
-      <View style={styles.celebHead}>
-        <View style={styles.celebHeadIcon}>
-          <MaterialIcons name="auto-awesome" size={13} color="#D97706" />
-        </View>
-        <Text style={styles.celebTitle}>CELEBRATIONS</Text>
-        <View style={styles.celebCount}><Text style={styles.celebCountText}>{events.length}</Text></View>
-        <Text style={styles.celebSub}>next 30 days</Text>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 6 }}>
-        {events.map((e) => {
-          const isToday = e.daysUntil === 0;
-          const bday = e.type === 'birthday';
-          const wish = bday
-            ? 'Happy Birthday! 🎂🎉 Wishing you a fantastic year ahead!'
-            : `Congratulations on ${e.years} wonderful year${e.years === 1 ? '' : 's'} with SESS! 🏆🎉`;
-          return (
-            <TouchableOpacity
-              key={`${e.type}-${e.id}`}
-              activeOpacity={0.85}
-              // Tap a celebration -> open chat with a ready-made wish.
-              onPress={() => navigation.navigate('Chat', {
-                user: { id: e.id, fullName: e.fullName, username: e.username },
-                prefill: wish,
-              })}
-            >
-              <LinearGradient
-                colors={isToday ? ['#F59E0B', '#D97706'] : bday ? ['#7C3AED', '#5B21B6'] : ['#1E40AF', '#312E81']}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                style={[styles.celebCard, isToday && styles.celebCardToday]}
-              >
-                <View style={styles.celebDeco} />
-                <View style={[styles.celebDeco, { width: 46, height: 46, top: undefined, bottom: -18, right: undefined, left: -14, opacity: 0.7 }]} />
+//   return (
+//     <View style={{ marginBottom: 6 }}>
+//       <View style={styles.celebHead}>
+//         <View style={styles.celebHeadIcon}>
+//           <MaterialIcons name="auto-awesome" size={13} color="#D97706" />
+//         </View>
+//         <Text style={styles.celebTitle}>CELEBRATIONS</Text>
+//         <View style={styles.celebCount}><Text style={styles.celebCountText}>{events.length}</Text></View>
+//         <Text style={styles.celebSub}>next 30 days</Text>
+//       </View>
+//       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 6 }}>
+//         {events.map((e) => {
+//           const isToday = e.daysUntil === 0;
+//           const bday = e.type === 'birthday';
+//           const wish = bday
+//             ? 'Happy Birthday! 🎂🎉 Wishing you a fantastic year ahead!'
+//             : `Congratulations on ${e.years} wonderful year${e.years === 1 ? '' : 's'} with SESS! 🏆🎉`;
+//           return (
+//             <TouchableOpacity
+//               key={`${e.type}-${e.id}`}
+//               activeOpacity={0.85}
+//               // Tap a celebration -> open chat with a ready-made wish.
+//               onPress={() => navigation.navigate('Chat', {
+//                 user: { id: e.id, fullName: e.fullName, username: e.username },
+//                 prefill: wish,
+//               })}
+//             >
+//               <LinearGradient
+//                 colors={isToday ? ['#F59E0B', '#D97706'] : bday ? ['#7C3AED', '#5B21B6'] : ['#1E40AF', '#312E81']}
+//                 start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+//                 style={[styles.celebCard, isToday && styles.celebCardToday]}
+//               >
+//                 <View style={styles.celebDeco} />
+//                 <View style={[styles.celebDeco, { width: 46, height: 46, top: undefined, bottom: -18, right: undefined, left: -14, opacity: 0.7 }]} />
 
-                <View style={styles.celebTopRow}>
-                  <View style={styles.celebAvatarWrap}>
-                    <View style={styles.celebAvatar}>
-                      <Text style={styles.celebAvatarText}>{initials(e.fullName || e.username)}</Text>
-                    </View>
-                    <View style={styles.celebEmoji}>
-                      <Text style={{ fontSize: 12 }}>{bday ? '🎂' : '🏆'}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.celebDate}>
-                    <Text style={styles.celebDateDay}>{prettyDay(e.date).split(' ')[0]}</Text>
-                    <Text style={styles.celebDateMon}>{prettyDay(e.date).split(' ')[1]}</Text>
-                  </View>
-                </View>
+//                 <View style={styles.celebTopRow}>
+//                   <View style={styles.celebAvatarWrap}>
+//                     <View style={styles.celebAvatar}>
+//                       <Text style={styles.celebAvatarText}>{initials(e.fullName || e.username)}</Text>
+//                     </View>
+//                     <View style={styles.celebEmoji}>
+//                       <Text style={{ fontSize: 12 }}>{bday ? '🎂' : '🏆'}</Text>
+//                     </View>
+//                   </View>
+//                   <View style={styles.celebDate}>
+//                     <Text style={styles.celebDateDay}>{prettyDay(e.date).split(' ')[0]}</Text>
+//                     <Text style={styles.celebDateMon}>{prettyDay(e.date).split(' ')[1]}</Text>
+//                   </View>
+//                 </View>
 
-                <Text style={styles.celebName} numberOfLines={1}>{e.fullName || e.username}</Text>
-                <Text style={styles.celebType} numberOfLines={1}>
-                  {bday ? 'Birthday' : `${e.years} yr${e.years === 1 ? '' : 's'} with SESS`}
-                  {e.designation ? ` · ${e.designation}` : ''}
-                </Text>
+//                 <Text style={styles.celebName} numberOfLines={1}>{e.fullName || e.username}</Text>
+//                 <Text style={styles.celebType} numberOfLines={1}>
+//                   {bday ? 'Birthday' : `${e.years} yr${e.years === 1 ? '' : 's'} with SESS`}
+//                   {e.designation ? ` · ${e.designation}` : ''}
+//                 </Text>
 
-                <View style={styles.celebFootRow}>
-                  <View style={[styles.celebPill, isToday && styles.celebPillToday]}>
-                    <Text style={[styles.celebPillText, isToday && { color: '#92400E' }]}>{when(e.daysUntil)}</Text>
-                  </View>
-                  <View style={styles.celebWishHint}>
-                    <MaterialIcons name="chat" size={11} color="rgba(255,255,255,0.95)" />
-                    <Text style={styles.celebWishText}>Wish</Text>
-                  </View>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    </View>
-  );
-}
+//                 <View style={styles.celebFootRow}>
+//                   <View style={[styles.celebPill, isToday && styles.celebPillToday]}>
+//                     <Text style={[styles.celebPillText, isToday && { color: '#92400E' }]}>{when(e.daysUntil)}</Text>
+//                   </View>
+//                   <View style={styles.celebWishHint}>
+//                     <MaterialIcons name="chat" size={11} color="rgba(255,255,255,0.95)" />
+//                     <Text style={styles.celebWishText}>Wish</Text>
+//                   </View>
+//                 </View>
+//               </LinearGradient>
+//             </TouchableOpacity>
+//           );
+//         })}
+//       </ScrollView>
+//     </View>
+//   );
+// }
 
 const getGreeting = () => {
   const h = new Date().getHours();
@@ -201,13 +201,11 @@ export default function DashboardScreen({ route, navigation }) {
     return () => { unsubFocus(); unsubBlur(); clearInterval(timer); };
   }, [navigation]);
 
+  // Punch / Chat / Profile moved to the bottom tab bar — tiles keep the rest.
   const tiles = [
     isAdmin && { key: 'users', label: 'User Management', sub: 'Create & manage accounts', icon: 'group', screen: 'Users' },
-    { key: 'punch', label: 'Punch In / Out', sub: 'Selfie + GPS attendance', icon: 'fingerprint', screen: 'Punch' },
-    { key: 'myatt', label: 'My Attendance', sub: 'History & working hours', icon: 'event-available', screen: 'MyAttendance' },
-    { key: 'leave', label: 'My Leave', sub: 'Apply & track leave balance', icon: 'beach-access', screen: 'Leave' },
-    { key: 'profile', label: 'My Profile', sub: 'Personal & employment details', icon: 'person', screen: 'MyProfile' },
-    { key: 'chat', label: 'Team Chat', sub: unread > 0 ? `${unread} unread message${unread === 1 ? '' : 's'} 🔴` : 'Wishes, blessings & updates', icon: 'chat', screen: 'ChatList' },
+    // { key: 'myatt', label: 'My Attendance', sub: 'History & working hours', icon: 'event-available', screen: 'MyAttendance' },
+    // { key: 'leave', label: 'My Leave', sub: 'Apply & track leave balance', icon: 'beach-access', screen: 'Leave' },
     isAdmin && { key: 'trail', label: 'Team Trail', sub: 'Employee location timeline', icon: 'map', screen: 'TeamTrail' },
     isAdmin && { key: 'teamatt', label: 'Team Attendance', sub: 'All employees • month reports', icon: 'groups', screen: 'TeamAttendance' },
     isAdmin && { key: 'leaveappr', label: 'Leave Approvals', sub: 'Review & approve requests', icon: 'fact-check', screen: 'LeaveApprovals' },
@@ -260,11 +258,25 @@ export default function DashboardScreen({ route, navigation }) {
 
       {/* ===== Tiles ===== */}
       <ScrollView contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
-        <HolidayWidget navigation={navigation} />
+        {/* Today Tasks — task management ships in the next update (design page 4) */}
+        <Text style={styles.sectionTitle}>TODAY TASKS</Text>
+        <TouchableOpacity style={styles.taskCard} activeOpacity={0.8}
+          onPress={() => navigation.navigate('TaskList')}>
+          <View style={styles.taskIcon}>
+            <MaterialIcons name="checklist" size={24} color={INDIGO} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.taskTitle}>Task management is coming soon</Text>
+            <Text style={styles.taskSub}>Your daily tasks will appear here · upcoming update 🚀</Text>
+          </View>
+          <MaterialIcons name="chevron-right" size={24} color="#9CA3AF" />
+        </TouchableOpacity>
 
-        <CelebrationsWidget navigation={navigation} />
+        {/* <HolidayWidget navigation={navigation} /> */}
 
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        {/* <CelebrationsWidget navigation={navigation} /> */}
+
+        {/* <Text style={styles.sectionTitle}>QUICK ACTIONS</Text> */}
         <View style={styles.tileWrap}>
           {tiles.map(t => (
             <TouchableOpacity
@@ -286,13 +298,7 @@ export default function DashboardScreen({ route, navigation }) {
         </View>
       </ScrollView>
 
-      <TouchableOpacity
-        style={styles.logoutBtn}
-        onPress={async () => { await clearAuth(); navigation.replace('Login'); }}
-      >
-        <MaterialIcons name="logout" size={18} color={INDIGO} />
-        <Text style={styles.logoutText}>Logout</Text>
-      </TouchableOpacity>
+      <BottomNav navigation={navigation} active={null} />
     </View>
   );
 }
@@ -380,7 +386,20 @@ const styles = StyleSheet.create({
   celebWishHint: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   celebWishText: { color: 'rgba(255,255,255,0.95)', fontSize: 9.5, fontWeight: '800', letterSpacing: 0.3 },
 
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#374151', marginBottom: 12 },
+  sectionTitle: { fontSize: 12, fontWeight: '800', color: '#374151', letterSpacing: 0.9, marginBottom: 12 },
+
+  taskCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#fff', borderRadius: 18, padding: 16, marginBottom: 20,
+    borderWidth: 1.5, borderColor: '#E0E7FF', borderStyle: 'dashed',
+    elevation: 1,
+  },
+  taskIcon: {
+    width: 44, height: 44, borderRadius: 14, backgroundColor: '#EEF2FF',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  taskTitle: { fontSize: 13.5, fontWeight: '800', color: '#111827' },
+  taskSub: { fontSize: 11, color: '#9CA3AF', marginTop: 3 },
   tileWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   tile: {
     width: '47.5%', backgroundColor: '#fff', borderRadius: 18, padding: 16,
@@ -395,10 +414,4 @@ const styles = StyleSheet.create({
   tileSub: { fontSize: 11, color: '#9CA3AF', marginTop: 3, lineHeight: 15 },
   tileArrow: { position: 'absolute', top: 14, right: 14 },
 
-  logoutBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    margin: 16, marginTop: 8, borderWidth: 1.5, borderColor: '#C7D2FE',
-    backgroundColor: '#fff', borderRadius: 14, paddingVertical: 13, elevation: 1,
-  },
-  logoutText: { color: INDIGO, fontWeight: '700' },
 });

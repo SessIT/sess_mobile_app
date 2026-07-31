@@ -6,19 +6,12 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Calendar } from 'react-native-calendars';
 import { api, API_URL } from '../lib/api';
+import { GradientHeader, HeaderIconButton, BottomNav, Card, Chip } from '../components/ui';
+import { COLORS, RADIUS, SHADOW } from '../lib/theme';
 
 const { width } = Dimensions.get('window');
-
-const INDIGO = '#1E3A8A';
-const GREEN = '#16A34A';
-const RED = '#DC2626';
-const AMBER = '#D97706';
-const GREY = '#6B7280';
-const LEAVE = '#7C3AED'; // paid leave (purple)
-const LIGHT_GREY = '#F3F4F6';
 const BASE = API_URL.replace('/api', '');
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -143,18 +136,18 @@ export default function MyAttendanceScreen({ navigation }) {
       for (const d of monthData.days) {
         if (d.status === 'future') continue;
         let bg = null, txt = '#fff';
-        if (d.status === 'present') bg = d.lateLevel === 'late' ? AMBER : GREEN;
-        else if (d.status === 'leave') bg = LEAVE;
-        else if (d.status === 'absent') bg = RED;
-        else if (d.status === 'weekoff') { bg = '#E5E7EB'; txt = GREY; }
+        if (d.status === 'present') bg = d.lateLevel === 'late' ? COLORS.orange : COLORS.green;
+        else if (d.status === 'leave') bg = COLORS.purple;
+        else if (d.status === 'absent') bg = COLORS.red;
+        else if (d.status === 'weekoff') { bg = COLORS.line; txt = COLORS.sub; }
         if (bg) {
           marks[d.date] = {
             customStyles: {
-              container: { 
-                backgroundColor: bg, 
-                borderRadius: 8,
-                elevation: bg !== '#E5E7EB' ? 3 : 0,
-                shadowColor: bg !== '#E5E7EB' ? bg : 'transparent',
+              container: {
+                backgroundColor: bg,
+                borderRadius: 10,
+                elevation: bg !== COLORS.line ? 3 : 0,
+                shadowColor: bg !== COLORS.line ? bg : 'transparent',
                 shadowOffset: { width: 0, height: 2 },
                 shadowOpacity: 0.2,
                 shadowRadius: 3,
@@ -165,20 +158,21 @@ export default function MyAttendanceScreen({ navigation }) {
         }
       }
     }
+    // Selected day always gets the indigo outline (defaults to today).
     const existing = marks[date]?.customStyles;
     marks[date] = {
       customStyles: {
-        container: { 
-          ...(existing?.container || { borderRadius: 8 }), 
-          borderWidth: 2, 
-          borderColor: INDIGO,
+        container: {
+          ...(existing?.container || { borderRadius: 10 }),
+          borderWidth: 2,
+          borderColor: COLORS.primary,
           elevation: 5,
-          shadowColor: INDIGO,
+          shadowColor: COLORS.primary,
           shadowOffset: { width: 0, height: 3 },
           shadowOpacity: 0.3,
           shadowRadius: 4,
         },
-        text: existing?.text || { color: INDIGO, fontWeight: '800' },
+        text: existing?.text || { color: COLORS.primary, fontWeight: '800' },
       },
     };
     return marks;
@@ -187,10 +181,10 @@ export default function MyAttendanceScreen({ navigation }) {
   const dayStatus = monthData?.days ? monthData.days.find(d => d.date === date) || null : null;
   const dayLate = isLateLevel(lateLevelOf(daySessions[0]?.punchInTime));
 
-  // Count boxes for quick stats
-  const CountBox = ({ label, value, color, icon }) => (
+  // Quick month stats — white tiles under the header
+  const CountBox = ({ label, value, color, soft, icon }) => (
     <View style={styles.countBox}>
-      <View style={[styles.countIcon, { backgroundColor: color + '15' }]}>
+      <View style={[styles.countIcon, { backgroundColor: soft }]}>
         <MaterialIcons name={icon} size={20} color={color} />
       </View>
       <Text style={[styles.countValue, { color }]}>{value}</Text>
@@ -199,128 +193,106 @@ export default function MyAttendanceScreen({ navigation }) {
   );
 
   const SessionCard = ({ s, isFirst }) => (
-    <View style={styles.sessCard}>
-      <LinearGradient
-        colors={['#ffffff', '#fafafa']}
-        style={styles.sessGradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        <View style={styles.sessHead}>
-          <View style={styles.sessIconWrap}>
-            <MaterialIcons
-              name={(s.siteName || 'SESS') === 'SESS' ? 'business' : 'directions-car'}
-              size={16} color="#fff"
-            />
-          </View>
-          <Text style={styles.sessSite}>{s.siteName || 'SESS'}</Text>
-          {isFirst && dayLate && <View style={styles.lateBadge}><Text style={styles.lateText}>LATE</Text></View>}
-          <View style={styles.hoursPill}>
-            <Text style={styles.hoursPillText}>{s.punchOutTime ? fmtH(s.workingHours) : 'On duty'}</Text>
-          </View>
+    <Card style={styles.sessCard}>
+      <View style={styles.sessHead}>
+        <View style={styles.sessIconWrap}>
+          <MaterialIcons
+            name={(s.siteName || 'SESS') === 'SESS' ? 'business' : 'directions-car'}
+            size={16} color="#fff"
+          />
         </View>
+        <Text style={styles.sessSite}>{s.siteName || 'SESS'}</Text>
+        {isFirst && dayLate && <Chip text="LATE" color={COLORS.orange} soft={COLORS.orangeSoft} />}
+        <Chip
+          text={s.punchOutTime ? fmtH(s.workingHours) : 'On duty'}
+          color={COLORS.primary} soft={COLORS.indigoSoft}
+        />
+      </View>
 
-        <View style={styles.photoPair}>
-          <View style={styles.photoCol}>
-            <View style={styles.timeLabel}>
-              <View style={[styles.timeDot, { backgroundColor: GREEN }]} />
-              <Text style={[styles.photoLabel, { color: GREEN }]}>IN  {fmtT(s.punchInTime)}</Text>
-            </View>
-            {s.punchInPhoto ? (
-              <Image source={{ uri: `${BASE}/${s.punchInPhoto}` }} style={styles.photo} />
-            ) : (
-              <View style={[styles.photo, styles.photoEmpty]}>
-                <MaterialIcons name="no-photography" size={28} color="#D1D5DB" />
-              </View>
-            )}
+      <View style={styles.photoPair}>
+        <View style={styles.photoCol}>
+          <View style={styles.timeLabel}>
+            <View style={[styles.timeDot, { backgroundColor: COLORS.green }]} />
+            <Text style={[styles.photoLabel, { color: COLORS.green }]}>IN  {fmtT(s.punchInTime)}</Text>
           </View>
-          <View style={styles.photoCol}>
-            <View style={styles.timeLabel}>
-              <View style={[styles.timeDot, { backgroundColor: RED }]} />
-              <Text style={[styles.photoLabel, { color: RED }]}>OUT  {fmtT(s.punchOutTime)}</Text>
+          {s.punchInPhoto ? (
+            <Image source={{ uri: `${BASE}/${s.punchInPhoto}` }} style={styles.photo} />
+          ) : (
+            <View style={[styles.photo, styles.photoEmpty]}>
+              <MaterialIcons name="no-photography" size={28} color="#D1D5DB" />
             </View>
-            {s.punchOutPhoto ? (
-              <Image source={{ uri: `${BASE}/${s.punchOutPhoto}` }} style={styles.photo} />
-            ) : (
-              <View style={[styles.photo, styles.photoEmpty]}>
-                <MaterialIcons name="schedule" size={28} color="#D1D5DB" />
-              </View>
-            )}
-          </View>
+          )}
         </View>
+        <View style={styles.photoCol}>
+          <View style={styles.timeLabel}>
+            <View style={[styles.timeDot, { backgroundColor: COLORS.red }]} />
+            <Text style={[styles.photoLabel, { color: COLORS.red }]}>OUT  {fmtT(s.punchOutTime)}</Text>
+          </View>
+          {s.punchOutPhoto ? (
+            <Image source={{ uri: `${BASE}/${s.punchOutPhoto}` }} style={styles.photo} />
+          ) : (
+            <View style={[styles.photo, styles.photoEmpty]}>
+              <MaterialIcons name="schedule" size={28} color="#D1D5DB" />
+            </View>
+          )}
+        </View>
+      </View>
 
-        {s.punchInAddress ? (
-          <View style={styles.addrRow}>
-            <MaterialIcons name="location-on" size={14} color={GREEN} />
-            <Text style={styles.addrText} numberOfLines={2}>{s.punchInAddress}</Text>
-          </View>
-        ) : null}
-        {s.punchOutAddress ? (
-          <View style={styles.addrRow}>
-            <MaterialIcons name="location-on" size={14} color={RED} />
-            <Text style={styles.addrText} numberOfLines={2}>{s.punchOutAddress}</Text>
-          </View>
-        ) : null}
-      </LinearGradient>
-    </View>
+      {s.punchInAddress ? (
+        <View style={styles.addrRow}>
+          <MaterialIcons name="location-on" size={14} color={COLORS.green} />
+          <Text style={styles.addrText} numberOfLines={2}>{s.punchInAddress}</Text>
+        </View>
+      ) : null}
+      {s.punchOutAddress ? (
+        <View style={styles.addrRow}>
+          <MaterialIcons name="location-on" size={14} color={COLORS.red} />
+          <Text style={styles.addrText} numberOfLines={2}>{s.punchOutAddress}</Text>
+        </View>
+      ) : null}
+    </Card>
   );
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      <LinearGradient 
-        colors={['#1E40AF', '#1E3A8A', '#312E81']} 
-        start={{ x: 0, y: 0 }} 
-        end={{ x: 1, y: 1 }} 
-        style={styles.header}
-      >
-        <View style={[styles.deco, { width: 200, height: 200, top: -70, right: -60 }]} />
-        <View style={[styles.deco, { width: 120, height: 120, bottom: -40, left: -30 }]} />
-        
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <MaterialIcons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>My Attendance</Text>
-            <Text style={styles.subTitle}>Effort: {fmtH(stats.hours)} / {fmtH(requiredHrs)} required</Text>
-          </View>
-          <TouchableOpacity style={styles.moreBtn}>
-            <MaterialIcons name="more-vert" size={20} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      </LinearGradient>
+      <GradientHeader
+        title="My Attendance"
+        subtitle={`Effort: ${fmtH(stats.hours)} / ${fmtH(requiredHrs)} required`}
+        onBack={() => navigation.goBack()}
+        right={<HeaderIconButton icon="more-vert" size={20} />}
+      />
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
-            onRefresh={() => { setRefreshing(true); loadMonth(); loadDay(); }} 
-            colors={[INDIGO]}
-            tintColor={INDIGO}
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); loadMonth(); loadDay(); }}
+            colors={[COLORS.primary]}
+            tintColor={COLORS.primary}
           />
         }
       >
-        {/* Premium Count Boxes */}
+        {/* Month stat tiles */}
         <View style={styles.countGrid}>
-          <CountBox label="Present" value={stats.present} color={GREEN} icon="check-circle" />
-          <CountBox label="Late" value={stats.late} color={AMBER} icon="access-time" />
-          <CountBox label="Leave" value={stats.leave ?? 0} color={LEAVE} icon="beach-access" />
-          <CountBox label="Absent" value={stats.absent} color={RED} icon="cancel" />
+          <CountBox label="Present" value={stats.present} color={COLORS.green} soft={COLORS.greenSoft} icon="check-circle" />
+          <CountBox label="Late" value={stats.late} color={COLORS.orange} soft={COLORS.orangeSoft} icon="access-time" />
+          <CountBox label="Leave" value={stats.leave ?? 0} color={COLORS.purple} soft={COLORS.purpleSoft} icon="beach-access" />
+          <CountBox label="Absent" value={stats.absent} color={COLORS.red} soft={COLORS.redSoft} icon="cancel" />
         </View>
 
-        <View style={styles.statDivider}>
-          <View style={styles.statDividerLine} />
-          <Text style={styles.statDividerText}>Monthly Overview</Text>
-          <View style={styles.statDividerLine} />
+        {/* Centered section label between thin lines, per design page 11 */}
+        <View style={styles.sectionDivider}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>MONTHLY OVERVIEW</Text>
+          <View style={styles.dividerLine} />
         </View>
 
-        {/* Calendar with premium styling */}
-        <View style={styles.calCard}>
-          {monthLoading && <ActivityIndicator size="small" color={INDIGO} style={{ marginVertical: 10 }} />}
+        <Card style={styles.calCard}>
+          {monthLoading && <ActivityIndicator size="small" color={COLORS.primary} style={{ marginVertical: 10 }} />}
           <Calendar
             key={month}
             current={date}
@@ -333,77 +305,75 @@ export default function MyAttendanceScreen({ navigation }) {
               if (ym <= thisMonth()) setMonth(ym);
             }}
             theme={{
-              todayTextColor: INDIGO,
-              arrowColor: INDIGO,
+              todayTextColor: COLORS.primary,
+              arrowColor: COLORS.primary,
               textMonthFontWeight: '800',
               textDayFontWeight: '600',
               textDayHeaderFontWeight: '700',
               textDayFontSize: 15,
               textMonthFontSize: 17,
               textDayHeaderFontSize: 12,
-              backgroundColor: '#ffffff',
-              calendarBackground: '#ffffff',
+              backgroundColor: COLORS.card,
+              calendarBackground: COLORS.card,
             }}
           />
-          
+
           <View style={styles.legendRow}>
             {[
-              ['Present', GREEN, '✓'],
-              ['Late', AMBER, '⏰'],
-              ['Leave', LEAVE, '🏖️'],
-              ['Absent', RED, '✗'],
-              ['Week Off', '#C4C4C4', '⊙']
-            ].map(([l, c, icon]) => (
+              ['Present', COLORS.green],
+              ['Late', COLORS.orange],
+              ['Leave', COLORS.purple],
+              ['Absent', COLORS.red],
+              ['Week Off', '#C4C4C4'],
+            ].map(([l, c]) => (
               <View key={l} style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: c }]} />
                 <Text style={styles.legendText}>{l}</Text>
               </View>
             ))}
           </View>
-        </View>
+        </Card>
 
-        {/* Selected date detail with premium styling */}
+        {/* Selected date detail */}
         <View style={styles.dateSection}>
-          <View style={styles.dateHeadRow}>
+          <Card style={styles.dateHeadRow}>
             <View style={styles.dateIconWrap}>
               <MaterialIcons name="event" size={18} color="#fff" />
             </View>
             <Text style={styles.dateHeadText}>{prettyDate(date)}</Text>
             {dayStatus?.status && (
-              <View style={[styles.statusPill,
-                { backgroundColor: dayStatus.status === 'present' ? GREEN :
-                   dayStatus.status === 'leave' ? LEAVE :
-                   dayStatus.status === 'absent' ? RED :
-                   dayStatus.status === 'weekoff' ? GREY : '#C4C4C4' }
-              ]}>
-                <Text style={styles.statusPillText}>
-                  {dayStatus.status === 'present' ? 'Present' :
-                   dayStatus.status === 'leave' ? 'Paid Leave' :
-                   dayStatus.status === 'absent' ? 'Absent' :
-                   dayStatus.status === 'weekoff' ? 'Week Off' : 'Upcoming'}
-                </Text>
-              </View>
+              <Chip
+                text={dayStatus.status === 'present' ? 'Present' :
+                  dayStatus.status === 'leave' ? 'Paid Leave' :
+                  dayStatus.status === 'absent' ? 'Absent' :
+                  dayStatus.status === 'weekoff' ? 'Week Off' : 'Upcoming'}
+                color={dayStatus.status === 'present' ? COLORS.green :
+                  dayStatus.status === 'leave' ? COLORS.purple :
+                  dayStatus.status === 'absent' ? COLORS.red : COLORS.sub}
+                soft={dayStatus.status === 'present' ? COLORS.greenSoft :
+                  dayStatus.status === 'leave' ? COLORS.purpleSoft :
+                  dayStatus.status === 'absent' ? COLORS.redSoft : COLORS.line}
+              />
             )}
-          </View>
+          </Card>
 
           {dayLoading ? (
-            <ActivityIndicator size="large" color={INDIGO} style={{ marginTop: 30 }} />
+            <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 30 }} />
           ) : daySessions.length > 0 ? (
             daySessions.map((s, i) => <SessionCard key={s.id} s={s} isFirst={i === 0} />)
           ) : (
-            <View style={styles.infoCard}>
-              <LinearGradient
-                colors={dayStatus?.status === 'leave' ? ['#EDE9FE', '#DDD6FE'] : ['#FEF3C7', '#FDE68A']}
-                style={styles.infoIconWrap}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
+            <Card style={styles.infoCard}>
+              <View style={[styles.infoIconWrap, {
+                backgroundColor: dayStatus?.status === 'leave' ? COLORS.purpleSoft :
+                  dayStatus?.status === 'weekoff' ? '#F3F4F6' :
+                  dayStatus?.status === 'future' ? COLORS.indigoSoft : COLORS.redSoft,
+              }]}>
                 <MaterialIcons
                   name={dayStatus?.status === 'leave' ? 'beach-access' : dayStatus?.status === 'weekoff' ? 'weekend' : dayStatus?.status === 'future' ? 'schedule' : 'person-off'}
                   size={32}
-                  color={dayStatus?.status === 'leave' ? LEAVE : dayStatus?.status === 'weekoff' ? GREY : dayStatus?.status === 'future' ? '#6B7280' : RED}
+                  color={dayStatus?.status === 'leave' ? COLORS.purple : dayStatus?.status === 'weekoff' ? COLORS.sub : dayStatus?.status === 'future' ? COLORS.sub : COLORS.red}
                 />
-              </LinearGradient>
+              </View>
               <Text style={styles.infoTitle}>
                 {dayStatus?.status === 'leave' ? 'Paid Leave'
                   : dayStatus?.status === 'weekoff' ? 'Week Off'
@@ -416,19 +386,19 @@ export default function MyAttendanceScreen({ navigation }) {
                   : dayStatus?.status === 'future' ? 'Attendance will be recorded on this day'
                   : 'No attendance records found for this date'}
               </Text>
-            </View>
+            </Card>
           )}
 
           {/* Attendance correction — raise a fix for a missed punch */}
           {!dayLoading && date <= todayYMD() && dayStatus?.status !== 'weekoff' && (
             dateCorrection ? (
               <View style={[styles.corrStatus, {
-                backgroundColor: dateCorrection.status === 'approved' ? '#ECFDF5' : '#FEF3C7',
+                backgroundColor: dateCorrection.status === 'approved' ? COLORS.greenSoft : COLORS.orangeSoft,
               }]}>
                 <MaterialIcons
                   name={dateCorrection.status === 'approved' ? 'check-circle' : 'hourglass-top'}
                   size={16}
-                  color={dateCorrection.status === 'approved' ? GREEN : AMBER}
+                  color={dateCorrection.status === 'approved' ? COLORS.green : COLORS.orange}
                 />
                 <Text style={[styles.corrStatusText, { color: dateCorrection.status === 'approved' ? '#166534' : '#92400E' }]}>
                   Correction {dateCorrection.status === 'approved' ? 'approved' : 'pending with HR'} for this day
@@ -436,7 +406,7 @@ export default function MyAttendanceScreen({ navigation }) {
               </View>
             ) : (
               <TouchableOpacity style={styles.corrBtn} activeOpacity={0.85} onPress={openCorrection}>
-                <MaterialIcons name="build-circle" size={18} color={INDIGO} />
+                <MaterialIcons name="build-circle" size={18} color={COLORS.primary} />
                 <Text style={styles.corrBtnText}>Missed a punch? Request correction</Text>
               </TouchableOpacity>
             )
@@ -453,14 +423,14 @@ export default function MyAttendanceScreen({ navigation }) {
 
             <Text style={styles.corrLabel}>CORRECT PUNCH-IN (HH:MM, 24h — blank to keep)</Text>
             <TextInput
-              style={styles.corrInput} placeholder="09:30" placeholderTextColor="#9CA3AF"
+              style={styles.corrInput} placeholder="09:30" placeholderTextColor={COLORS.faint}
               keyboardType="numbers-and-punctuation" maxLength={5}
               value={corrIn} onChangeText={setCorrIn}
             />
 
             <Text style={styles.corrLabel}>CORRECT PUNCH-OUT (blank to keep)</Text>
             <TextInput
-              style={styles.corrInput} placeholder="18:00" placeholderTextColor="#9CA3AF"
+              style={styles.corrInput} placeholder="18:00" placeholderTextColor={COLORS.faint}
               keyboardType="numbers-and-punctuation" maxLength={5}
               value={corrOut} onChangeText={setCorrOut}
             />
@@ -469,7 +439,7 @@ export default function MyAttendanceScreen({ navigation }) {
             <TextInput
               style={[styles.corrInput, { height: 70, textAlignVertical: 'top', paddingTop: 10 }, !corrReason.trim() && { borderColor: '#FCA5A5' }]}
               placeholder="e.g. Forgot to punch out while leaving site"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={COLORS.faint}
               multiline maxLength={500}
               value={corrReason} onChangeText={setCorrReason}
             />
@@ -489,48 +459,16 @@ export default function MyAttendanceScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+
+      <BottomNav navigation={navigation} active="profile" />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3F4F6' },
-  
-  header: { 
-    paddingTop: 52, 
-    paddingBottom: 22, 
-    paddingHorizontal: 18, 
-    borderBottomLeftRadius: 28, 
-    borderBottomRightRadius: 28, 
-    overflow: 'hidden', 
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-  },
-  deco: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.06)' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  backBtn: { 
-    width: 40, 
-    height: 40, 
-    borderRadius: 20, 
-    backgroundColor: 'rgba(255,255,255,0.15)', 
-    justifyContent: 'center', 
-    alignItems: 'center',
-    backdropFilter: 'blur(10px)',
-  },
-  moreBtn: { 
-    width: 40, 
-    height: 40, 
-    borderRadius: 20, 
-    backgroundColor: 'rgba(255,255,255,0.1)', 
-    justifyContent: 'center', 
-    alignItems: 'center',
-  },
-  title: { color: '#fff', fontSize: 20, fontWeight: '800', letterSpacing: 0.5 },
-  subTitle: { color: '#C7D2FE', fontSize: 12, marginTop: 2, opacity: 0.9 },
+  container: { flex: 1, backgroundColor: COLORS.bg },
 
+  /* stat tiles */
   countGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -541,290 +479,110 @@ const styles = StyleSheet.create({
   countBox: {
     flex: 1,
     minWidth: (width - 48) / 4 - 8,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.card,
     borderRadius: 16,
     padding: 12,
     alignItems: 'center',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
+    ...SHADOW.card,
   },
   countIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 6,
+    width: 36, height: 36, borderRadius: 10,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 6,
   },
-  countValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-  },
+  countValue: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   countLabel: {
-    fontSize: 10,
-    color: GREY,
-    fontWeight: '700',
-    marginTop: 2,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: 10, color: COLORS.sub, fontWeight: '700', marginTop: 2,
+    textTransform: 'uppercase', letterSpacing: 0.5,
   },
 
-  statDivider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-    gap: 12,
-  },
-  statDividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#E5E7EB',
-  },
-  statDividerText: {
-    fontSize: 13,
-    color: GREY,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
+  /* centered section divider */
+  sectionDivider: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.line },
+  dividerText: { fontSize: 12, color: COLORS.sub, fontWeight: '800', letterSpacing: 1 },
 
-  calCard: { 
-    backgroundColor: '#fff', 
-    borderRadius: 20, 
-    padding: 12, 
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
-  },
+  /* calendar */
+  calCard: { padding: 12, marginBottom: 16 },
   legendRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 14,
-    paddingVertical: 10,
-    borderTopWidth: 1, 
-    borderTopColor: '#F3F4F6',
-    marginTop: 4,
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 14,
+    paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6', marginTop: 4,
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  legendDot: { width: 10, height: 10, borderRadius: 4 },
-  legendText: { fontSize: 11, color: GREY, fontWeight: '600' },
+  legendDot: { width: 10, height: 10, borderRadius: 5 },
+  legendText: { fontSize: 11, color: COLORS.sub, fontWeight: '600' },
 
-  /* Attendance correction */
-  corrBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 14, backgroundColor: '#EEF2FF', borderRadius: 13, paddingVertical: 13, borderWidth: 1.5, borderColor: '#E0E7FF' },
-  corrBtnText: { color: INDIGO, fontSize: 13.5, fontWeight: '800' },
-  corrStatus: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 14, borderRadius: 13, paddingVertical: 12 },
+  /* attendance correction */
+  corrBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 14,
+    backgroundColor: COLORS.indigoSoft, borderRadius: 13, paddingVertical: 13,
+    borderWidth: 1.5, borderColor: '#E0E7FF',
+  },
+  corrBtnText: { color: COLORS.primary, fontSize: 13.5, fontWeight: '800' },
+  corrStatus: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+    marginTop: 14, borderRadius: 13, paddingVertical: 12,
+  },
   corrStatusText: { fontSize: 12.5, fontWeight: '800' },
   corrOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', padding: 22 },
-  corrCard: { backgroundColor: '#fff', borderRadius: 24, padding: 20 },
-  corrTitle: { fontSize: 17, fontWeight: '800', color: '#111827', textAlign: 'center' },
-  corrSub: { fontSize: 12, color: GREY, textAlign: 'center', marginTop: 3, marginBottom: 6 },
-  corrLabel: { fontSize: 10.5, fontWeight: '800', color: '#9CA3AF', letterSpacing: 0.6, marginTop: 12, marginBottom: 6 },
-  corrInput: { backgroundColor: '#F9FAFB', borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 12, height: 48, fontSize: 15, color: '#111827', fontWeight: '600' },
-  corrCancel: { flex: 1, height: 48, borderRadius: 12, borderWidth: 1.5, borderColor: '#E5E7EB', justifyContent: 'center', alignItems: 'center' },
+  corrCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 20 },
+  corrTitle: { fontSize: 17, fontWeight: '800', color: COLORS.ink, textAlign: 'center' },
+  corrSub: { fontSize: 12, color: COLORS.sub, textAlign: 'center', marginTop: 3, marginBottom: 6 },
+  corrLabel: { fontSize: 10.5, fontWeight: '800', color: COLORS.faint, letterSpacing: 0.6, marginTop: 12, marginBottom: 6 },
+  corrInput: {
+    backgroundColor: COLORS.field, borderWidth: 1.5, borderColor: COLORS.line,
+    borderRadius: RADIUS.input, paddingHorizontal: 12, height: 48,
+    fontSize: 15, color: COLORS.ink, fontWeight: '600',
+  },
+  corrCancel: {
+    flex: 1, height: 48, borderRadius: RADIUS.input, borderWidth: 1.5, borderColor: COLORS.line,
+    justifyContent: 'center', alignItems: 'center',
+  },
   corrCancelText: { color: '#374151', fontWeight: '700' },
-  corrSubmit: { flex: 1, height: 48, borderRadius: 12, backgroundColor: INDIGO, justifyContent: 'center', alignItems: 'center' },
+  corrSubmit: {
+    flex: 1, height: 48, borderRadius: RADIUS.input, backgroundColor: COLORS.primary,
+    justifyContent: 'center', alignItems: 'center',
+  },
   corrSubmitText: { color: '#fff', fontWeight: '800' },
 
-  dateSection: {
-    marginTop: 4,
-  },
-  dateHeadRow: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    gap: 10, 
-    marginBottom: 12,
-    backgroundColor: '#fff',
-    padding: 12,
-    borderRadius: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
+  /* selected date detail */
+  dateSection: { marginTop: 4 },
+  dateHeadRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    padding: 12, marginBottom: 12,
   },
   dateIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: INDIGO,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 32, height: 32, borderRadius: 10, backgroundColor: COLORS.primary,
+    justifyContent: 'center', alignItems: 'center',
   },
-  dateHeadText: { 
-    fontSize: 14, 
-    fontWeight: '800', 
-    color: '#111827',
-    flex: 1,
-  },
-  statusPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusPillText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
+  dateHeadText: { fontSize: 14, fontWeight: '800', color: COLORS.ink, flex: 1 },
 
-  sessCard: { 
-    marginBottom: 12,
-    borderRadius: 18,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
-  },
-  sessGradient: {
-    borderRadius: 18,
-    padding: 14,
-  },
-  sessHead: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    gap: 8,
-    marginBottom: 8,
-  },
+  sessCard: { padding: 14, marginBottom: 12 },
+  sessHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   sessIconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: INDIGO,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 28, height: 28, borderRadius: 8, backgroundColor: COLORS.primary,
+    justifyContent: 'center', alignItems: 'center',
   },
-  sessSite: { 
-    fontSize: 13, 
-    fontWeight: '800', 
-    color: '#111827', 
-    flex: 1,
+  sessSite: { fontSize: 13, fontWeight: '800', color: COLORS.ink, flex: 1 },
+  photoPair: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  photoCol: { flex: 1 },
+  timeLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 },
+  timeDot: { width: 6, height: 6, borderRadius: 3 },
+  photoLabel: { fontSize: 11, fontWeight: '800' },
+  photo: {
+    width: '100%', height: 120, borderRadius: 12, backgroundColor: COLORS.field,
+    borderWidth: 1, borderColor: COLORS.line,
   },
-  lateBadge: { 
-    backgroundColor: '#FEF3C7', 
-    borderRadius: 8, 
-    paddingHorizontal: 8, 
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: '#FCD34D',
+  photoEmpty: { justifyContent: 'center', alignItems: 'center' },
+  addrRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F3F4F6',
   },
-  lateText: { 
-    color: AMBER, 
-    fontSize: 9, 
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  hoursPill: { 
-    backgroundColor: '#EEF2FF', 
-    borderRadius: 10, 
-    paddingHorizontal: 10, 
-    paddingVertical: 4,
-  },
-  hoursPillText: { 
-    color: INDIGO, 
-    fontSize: 11, 
-    fontWeight: '800',
-  },
-  photoPair: { 
-    flexDirection: 'row', 
-    gap: 12, 
-    marginTop: 4,
-  },
-  photoCol: { 
-    flex: 1,
-  },
-  timeLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 4,
-  },
-  timeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  photoLabel: { 
-    fontSize: 11, 
-    fontWeight: '800', 
-  },
-  photo: { 
-    width: '100%', 
-    height: 120, 
-    borderRadius: 12, 
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  photoEmpty: { 
-    justifyContent: 'center', 
-    alignItems: 'center',
-  },
-  addrRow: { 
-    flexDirection: 'row', 
-    alignItems: 'flex-start', 
-    gap: 6, 
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-  },
-  addrText: { 
-    flex: 1, 
-    fontSize: 11.5, 
-    color: GREY, 
-    lineHeight: 15,
-  },
+  addrText: { flex: 1, fontSize: 11.5, color: COLORS.sub, lineHeight: 15 },
 
-  infoCard: { 
-    backgroundColor: '#fff', 
-    borderRadius: 20, 
-    padding: 28, 
-    alignItems: 'center', 
-    gap: 10,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
-  },
+  infoCard: { padding: 28, alignItems: 'center', gap: 10 },
   infoIconWrap: {
-    width: 60,
-    height: 60,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 4,
+    width: 60, height: 60, borderRadius: 20,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 4,
   },
-  infoTitle: { 
-    fontSize: 16, 
-    fontWeight: '800', 
-    color: '#111827',
-  },
-  infoSub: { 
-    fontSize: 12.5, 
-    color: '#9CA3AF', 
-    textAlign: 'center',
-    lineHeight: 18,
-  },
+  infoTitle: { fontSize: 16, fontWeight: '800', color: COLORS.ink },
+  infoSub: { fontSize: 12.5, color: COLORS.faint, textAlign: 'center', lineHeight: 18 },
 });

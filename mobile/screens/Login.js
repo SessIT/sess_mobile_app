@@ -162,12 +162,10 @@ export default function LoginScreen({ navigation }) {
           {/* ===== Brand ===== */}
           <View style={styles.brand}>
             <View style={styles.logoCircle}>
-              {/* Logo ready aana: assets/logo.png-la save panni, keezha line-a uncomment + icon line-a delete */}
-              {/* <Image source={require('../assets/sesslogo.png')} style={styles.logoImg} resizeMode="contain" /> */}
-              <MaterialIcons name="precision-manufacturing" size={42} color={INDIGO} />
+              <Image source={require('../assets/sesslogo.png')} style={styles.logoImg} resizeMode="contain" />
             </View>
             <Text style={styles.brandName}>SESS Employee</Text>
-            <Text style={styles.brandSub}>Sri Eswari Scientific Solution</Text>
+            <Text style={styles.brandSub}>SRI EASWARI SCIENTIFIC SOLUTION</Text>
           </View>
 
           {/* ===== Card ===== */}
@@ -312,9 +310,14 @@ export default function LoginScreen({ navigation }) {
             )}
           </View>
 
-          <Text style={styles.footer}>© {new Date().getFullYear()} Sri Eswari Scientific Solution Pvt Ltd</Text>
+          <Text style={styles.footer}>© {new Date().getFullYear()} Sri Easwari Scientific Solution Pvt Ltd</Text>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Settings gear (design page 1) — Terms / Privacy / version, pre-login */}
+      <TouchableOpacity style={styles.gearBtn} onPress={() => navigation.navigate('MoreSettings')}>
+        <MaterialIcons name="settings" size={22} color="rgba(255,255,255,0.85)" />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -331,7 +334,11 @@ const styles = StyleSheet.create({
   },
   logoImg: { width: 62, height: 62 },
   brandName: { color: '#fff', fontSize: 26, fontWeight: '800', marginTop: 14, letterSpacing: 0.3 },
-  brandSub: { color: '#C7D2FE', fontSize: 13, marginTop: 3 },
+  brandSub: { color: '#C7D2FE', fontSize: 12, marginTop: 4, letterSpacing: 1.2, fontWeight: '600' },
+  gearBtn: {
+    position: 'absolute', bottom: 26, right: 22, width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)', justifyContent: 'center', alignItems: 'center',
+  },
 
   card: {
     backgroundColor: '#fff', borderRadius: 24, padding: 22, elevation: 10,

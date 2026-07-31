@@ -7,24 +7,20 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../lib/api';
-
-const INDIGO = '#1E3A8A';
-const GREEN = '#16A34A';
-const RED = '#DC2626';
-const AMBER = '#D97706';
-const GREY = '#6B7280';
+import { GradientHeader, BottomNav, Card, Chip } from '../components/ui';
+import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const CUR_YEAR = Number(todayYMD().slice(0, 4));
 const prettyDate = (iso) =>
   new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const rangeText = (a, b) => (a.slice(0, 10) === b.slice(0, 10) ? prettyDate(a) : `${prettyDate(a)} → ${prettyDate(b)}`);
-const TYPE_COLOR = { CL: '#2563EB', SL: '#D97706', PL: '#16A34A' };
+const TYPE_COLOR = { CL: '#2563EB', SL: COLORS.orange, PL: COLORS.green };
 const STATUS_STYLE = {
-  pending: { c: AMBER, bg: '#FEF3C7', label: 'Pending' },
-  approved: { c: GREEN, bg: '#ECFDF5', label: 'Approved' },
-  rejected: { c: RED, bg: '#FEE2E2', label: 'Rejected' },
-  cancelled: { c: GREY, bg: '#F3F4F6', label: 'Cancelled' },
+  pending: { c: COLORS.orange, bg: COLORS.orangeSoft, label: 'Pending' },
+  approved: { c: COLORS.green, bg: COLORS.greenSoft, label: 'Approved' },
+  rejected: { c: COLORS.red, bg: COLORS.redSoft, label: 'Rejected' },
+  cancelled: { c: COLORS.sub, bg: '#F3F4F6', label: 'Cancelled' },
 };
 const FILTERS = ['pending', 'approved', 'rejected', 'all'];
 
@@ -77,17 +73,12 @@ export default function LeaveApprovalsScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      <LinearGradient colors={['#1E40AF', '#1E3A8A', '#312E81']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}>
-        <View style={[styles.deco, { width: 150, height: 150, top: -55, right: -45 }]} />
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <MaterialIcons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>Leave Approvals</Text>
-            <Text style={styles.subTitle}>{CUR_YEAR} • {pendingCount} pending</Text>
-          </View>
-        </View>
+
+      <GradientHeader
+        title="Leave Approvals"
+        subtitle={`${CUR_YEAR} • ${pendingCount} pending`}
+        onBack={() => navigation.goBack()}
+      >
         <View style={styles.segment}>
           {FILTERS.map((f) => (
             <TouchableOpacity key={f} style={[styles.segBtn, filter === f && styles.segBtnOn]} onPress={() => setFilter(f)}>
@@ -95,13 +86,16 @@ export default function LeaveApprovalsScreen({ navigation }) {
             </TouchableOpacity>
           ))}
         </View>
-      </LinearGradient>
+      </GradientHeader>
 
       {loading ? (
-        <ActivityIndicator size="large" color={INDIGO} style={{ marginTop: 40 }} />
+        <View style={{ flex: 1 }}>
+          <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} />
+        </View>
       ) : (
         <ScrollView
-          contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
         >
           {requests.length === 0 ? (
@@ -114,22 +108,20 @@ export default function LeaveApprovalsScreen({ navigation }) {
               const st = STATUS_STYLE[r.status] || STATUS_STYLE.cancelled;
               const busy = busyId === r.id;
               return (
-                <View key={r.id} style={styles.card}>
+                <Card key={r.id} style={styles.reqCard}>
                   <View style={styles.cardTop}>
-                    <View style={[styles.typeTag, { backgroundColor: (TYPE_COLOR[r.leaveType?.code] || INDIGO) + '18' }]}>
-                      <Text style={[styles.typeText, { color: TYPE_COLOR[r.leaveType?.code] || INDIGO }]}>{r.leaveType?.code}</Text>
+                    <View style={[styles.typeTag, { backgroundColor: (TYPE_COLOR[r.leaveType?.code] || COLORS.primary) + '18' }]}>
+                      <Text style={[styles.typeText, { color: TYPE_COLOR[r.leaveType?.code] || COLORS.primary }]}>{r.leaveType?.code}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.name}>{r.user?.fullName || r.user?.username}</Text>
                       <Text style={styles.userSub}>@{r.user?.username}</Text>
                     </View>
-                    <View style={[styles.stPill, { backgroundColor: st.bg }]}>
-                      <Text style={[styles.stText, { color: st.c }]}>{st.label}</Text>
-                    </View>
+                    <Chip text={st.label} color={st.c} soft={st.bg} />
                   </View>
 
                   <View style={styles.detailRow}>
-                    <MaterialIcons name="event" size={15} color={GREY} />
+                    <MaterialIcons name="event" size={15} color={COLORS.sub} />
                     <Text style={styles.detailText}>{rangeText(r.startDate, r.endDate)}</Text>
                     <View style={styles.daysPill}><Text style={styles.daysText}>{r.days} day{r.days === 1 ? '' : 's'}</Text></View>
                   </View>
@@ -138,64 +130,62 @@ export default function LeaveApprovalsScreen({ navigation }) {
                   {r.status === 'pending' && (
                     <View style={styles.actions}>
                       <TouchableOpacity style={[styles.actBtn, styles.rejectBtn]} disabled={busy} onPress={() => decide(r, 'rejected')}>
-                        <MaterialIcons name="close" size={17} color={RED} />
-                        <Text style={[styles.actText, { color: RED }]}>Reject</Text>
+                        <MaterialIcons name="close" size={17} color={COLORS.red} />
+                        <Text style={[styles.actText, { color: COLORS.red }]}>Reject</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actBtn, styles.approveBtn]} disabled={busy} onPress={() => decide(r, 'approved')}>
-                        {busy ? <ActivityIndicator color="#fff" size="small" /> : (
-                          <>
-                            <MaterialIcons name="check" size={17} color="#fff" />
-                            <Text style={[styles.actText, { color: '#fff' }]}>Approve</Text>
-                          </>
-                        )}
+                      <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.85} disabled={busy} onPress={() => decide(r, 'approved')}>
+                        <LinearGradient colors={GREEN_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                          style={[styles.actBtn, busy && { opacity: 0.75 }]}>
+                          {busy ? <ActivityIndicator color="#fff" size="small" /> : (
+                            <>
+                              <MaterialIcons name="check" size={17} color="#fff" />
+                              <Text style={[styles.actText, { color: '#fff' }]}>Approve</Text>
+                            </>
+                          )}
+                        </LinearGradient>
                       </TouchableOpacity>
                     </View>
                   )}
-                </View>
+                </Card>
               );
             })
           )}
         </ScrollView>
       )}
+
+      <BottomNav navigation={navigation} active={null} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3F4F6' },
-  header: { paddingTop: 52, paddingBottom: 14, paddingHorizontal: 16, borderBottomLeftRadius: 26, borderBottomRightRadius: 26, overflow: 'hidden', elevation: 6 },
-  deco: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.07)' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center' },
-  title: { color: '#fff', fontSize: 17, fontWeight: '800' },
-  subTitle: { color: '#C7D2FE', fontSize: 11.5, marginTop: 1 },
+  container: { flex: 1, backgroundColor: COLORS.bg },
+
+  /* header controls (inside GradientHeader) */
   segment: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12, padding: 4, marginTop: 14 },
   segBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
   segBtnOn: { backgroundColor: '#fff' },
   segText: { color: '#E0E7FF', fontWeight: '700', fontSize: 11.5 },
-  segTextOn: { color: INDIGO },
+  segTextOn: { color: COLORS.primary },
 
   empty: { alignItems: 'center', paddingVertical: 50, gap: 10 },
-  emptyText: { color: '#9CA3AF', fontSize: 13 },
+  emptyText: { color: COLORS.faint, fontSize: 13 },
 
-  card: { backgroundColor: '#fff', borderRadius: 16, padding: 14, marginBottom: 10, elevation: 1 },
+  reqCard: { padding: 14, marginBottom: 10 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   typeTag: { width: 42, height: 42, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   typeText: { fontSize: 13, fontWeight: '800' },
-  name: { fontSize: 14, fontWeight: '800', color: '#111827' },
-  userSub: { fontSize: 11.5, color: '#9CA3AF', marginTop: 1 },
-  stPill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  stText: { fontSize: 10.5, fontWeight: '800' },
+  name: { fontSize: 14, fontWeight: '800', color: COLORS.ink },
+  userSub: { fontSize: 11.5, color: COLORS.faint, marginTop: 1 },
 
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 },
   detailText: { fontSize: 13, color: '#374151', fontWeight: '600' },
-  daysPill: { backgroundColor: '#EEF2FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 4 },
-  daysText: { fontSize: 11, color: INDIGO, fontWeight: '800' },
-  reason: { fontSize: 12.5, color: '#6B7280', marginTop: 8, fontStyle: 'italic' },
+  daysPill: { backgroundColor: COLORS.indigoSoft, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 4 },
+  daysText: { fontSize: 11, color: COLORS.primary, fontWeight: '800' },
+  reason: { fontSize: 12.5, color: COLORS.sub, marginTop: 8, fontStyle: 'italic' },
 
   actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  actBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 44, borderRadius: 12 },
-  rejectBtn: { borderWidth: 1.5, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
-  approveBtn: { backgroundColor: GREEN },
+  actBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 46, borderRadius: RADIUS.button },
+  rejectBtn: { flex: 1, borderWidth: 1.5, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
   actText: { fontSize: 13.5, fontWeight: '800' },
 });

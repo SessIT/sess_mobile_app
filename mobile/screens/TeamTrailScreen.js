@@ -5,16 +5,13 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Calendar } from 'react-native-calendars';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api } from '../lib/api';
+import { GradientHeader, BottomNav, Chip, PrimaryButton } from '../components/ui';
+import { COLORS, RADIUS, SHADOW } from '../lib/theme';
 
-const INDIGO = '#1E3A8A';
-const GREEN = '#16A34A';
-const RED = '#DC2626';
-const AMBER = '#D97706';
 const GAP_MIN = 8; // 5-min capture interval → 8+ min illa-na gap flag
 
 const todayYMD = () => {
@@ -120,12 +117,12 @@ export default function TeamTrailScreen({ navigation }) {
     } finally { setExporting(false); }
   };
 
-  /* ---------- renderers ---------- */
+  /* ---------- renderers (timeline logic unchanged, chrome restyled) ---------- */
   const renderRow = ({ item: r, index }) => r.type === 'gap' ? (
     <View style={styles.gapRow}>
       <View style={styles.gapLine} />
       <View style={styles.gapBadge}>
-        <MaterialIcons name="signal-wifi-off" size={13} color={AMBER} />
+        <MaterialIcons name="signal-wifi-off" size={13} color={COLORS.orange} />
         <Text style={styles.gapText}>Tracking gap • {r.mins} min (no data)</Text>
       </View>
       <View style={styles.gapLine} />
@@ -134,7 +131,7 @@ export default function TeamTrailScreen({ navigation }) {
     <View style={styles.pointRow}>
       <Text style={styles.pointTime}>{fmtT(r.log.capturedAt)}</Text>
       <View style={styles.dotCol}>
-        <View style={[styles.dot, r.log.suspicious && { backgroundColor: RED }]} />
+        <View style={[styles.dot, r.log.suspicious && { backgroundColor: COLORS.red }]} />
         {index < rows.length - 1 && <View style={styles.line} />}
       </View>
       <View style={styles.pointCard}>
@@ -151,7 +148,7 @@ export default function TeamTrailScreen({ navigation }) {
           )}
           {r.log.suspicious && (
             <View style={styles.susBadge}>
-              <MaterialIcons name="flag" size={11} color={RED} />
+              <MaterialIcons name="flag" size={11} color={COLORS.red} />
               <Text style={styles.susText}>time mismatch</Text>
             </View>
           )}
@@ -165,17 +162,10 @@ export default function TeamTrailScreen({ navigation }) {
       <StatusBar style="light" />
 
       {/* ===== Header ===== */}
-      <LinearGradient
-        colors={['#1E40AF', '#1E3A8A', '#312E81']}
-        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <View style={[styles.deco, { width: 160, height: 160, top: -55, right: -45 }]} />
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <MaterialIcons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.title}>Team Trail</Text>
+      <GradientHeader
+        title="Team Trail"
+        onBack={() => navigation.goBack()}
+        right={
           <TouchableOpacity
             style={[styles.exportBtn, (!logs.length || exporting) && { opacity: 0.5 }]}
             disabled={!logs.length || exporting}
@@ -188,8 +178,8 @@ export default function TeamTrailScreen({ navigation }) {
               </>
             )}
           </TouchableOpacity>
-        </View>
-
+        }
+      >
         {/* ===== Filters ===== */}
         <View style={styles.filterRow}>
           <TouchableOpacity style={[styles.filterField, { flex: 1.3 }]} onPress={() => { setSearch(''); setEmpModal(true); }}>
@@ -208,27 +198,30 @@ export default function TeamTrailScreen({ navigation }) {
             <MaterialIcons name="arrow-drop-down" size={22} color="#C7D2FE" />
           </TouchableOpacity>
         </View>
-      </LinearGradient>
+      </GradientHeader>
 
       {/* ===== Summary ===== */}
       {!loading && logs.length > 0 && (
         <View style={styles.summaryRow}>
-          <View style={styles.sumPill}><Text style={styles.sumText}>{logs.length} points</Text></View>
-          <View style={styles.sumPill}><Text style={styles.sumText}>{fmtT(logs[0].capturedAt)} – {fmtT(logs[logs.length - 1].capturedAt)}</Text></View>
-          {gapCount > 0 && <View style={[styles.sumPill, { backgroundColor: '#FEF3C7' }]}><Text style={[styles.sumText, { color: AMBER }]}>⚠ {gapCount} gaps</Text></View>}
-          {susCount > 0 && <View style={[styles.sumPill, { backgroundColor: '#FEE2E2' }]}><Text style={[styles.sumText, { color: RED }]}>🚩 {susCount}</Text></View>}
+          <Chip icon="place" text={`${logs.length} points`} />
+          <Chip icon="schedule" text={`${fmtT(logs[0].capturedAt)} – ${fmtT(logs[logs.length - 1].capturedAt)}`} />
+          {gapCount > 0 && <Chip icon="signal-wifi-off" text={`${gapCount} gaps`} color={COLORS.orange} soft={COLORS.orangeSoft} />}
+          {susCount > 0 && <Chip icon="flag" text={`${susCount} flagged`} color={COLORS.red} soft={COLORS.redSoft} />}
         </View>
       )}
 
       {/* ===== List ===== */}
       {loading ? (
-        <ActivityIndicator size="large" color={INDIGO} style={{ marginTop: 40 }} />
+        <View style={{ flex: 1 }}>
+          <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} />
+        </View>
       ) : (
         <FlatList
+          style={{ flex: 1 }}
           data={rows}
           keyExtractor={(r) => r.key}
           renderItem={renderRow}
-          contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
           ListEmptyComponent={
             <View style={styles.empty}>
@@ -246,11 +239,11 @@ export default function TeamTrailScreen({ navigation }) {
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Select Employee</Text>
             <View style={styles.searchRow}>
-              <MaterialIcons name="search" size={19} color="#6B7280" />
+              <MaterialIcons name="search" size={19} color={COLORS.sub} />
               <TextInput
                 style={styles.searchInput}
                 placeholder="Search name or username…"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={COLORS.faint}
                 value={search}
                 onChangeText={setSearch}
                 autoFocus
@@ -273,7 +266,7 @@ export default function TeamTrailScreen({ navigation }) {
                     <Text style={styles.eName}>{u.fullName || u.username}</Text>
                     <Text style={styles.eSub}>@{u.username} • {(u.roles || []).join(', ')}</Text>
                   </View>
-                  {selected?.id === u.id && <MaterialIcons name="check-circle" size={20} color={GREEN} />}
+                  {selected?.id === u.id && <MaterialIcons name="check-circle" size={20} color={COLORS.green} />}
                 </TouchableOpacity>
               )}
               ListEmptyComponent={<Text style={styles.emptyText}>No employees found</Text>}
@@ -294,89 +287,95 @@ export default function TeamTrailScreen({ navigation }) {
               current={date}
               maxDate={todayYMD()}
               onDayPress={(d) => { setDate(d.dateString); setCalModal(false); }}
-              markedDates={{ [date]: { selected: true, selectedColor: INDIGO } }}
+              markedDates={{ [date]: { selected: true, selectedColor: COLORS.primary } }}
               theme={{
-                todayTextColor: INDIGO,
-                arrowColor: INDIGO,
+                todayTextColor: COLORS.primary,
+                arrowColor: COLORS.primary,
                 textMonthFontWeight: '800',
                 textDayFontWeight: '600',
               }}
             />
             <View style={styles.calBtnRow}>
-              <TouchableOpacity style={styles.todayBtn}
-                onPress={() => { setDate(todayYMD()); setCalModal(false); }}>
-                <Text style={styles.todayText}>Today</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.sheetClose} onPress={() => setCalModal(false)}>
+              <PrimaryButton title="Today" style={{ flex: 1 }}
+                onPress={() => { setDate(todayYMD()); setCalModal(false); }} />
+              <TouchableOpacity style={[styles.sheetClose, { flex: 1, marginTop: 0 }]} onPress={() => setCalModal(false)}>
                 <Text style={styles.sheetCloseText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
+
+      <BottomNav navigation={navigation} active={null} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3F4F6' },
-  header: { paddingTop: 52, paddingBottom: 16, paddingHorizontal: 16, borderBottomLeftRadius: 26, borderBottomRightRadius: 26, overflow: 'hidden', elevation: 6 },
-  deco: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.07)' },
-  headerRow: { flexDirection: 'row', alignItems: 'center' },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  title: { color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 },
-  exportBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)' },
-  exportText: { color: '#fff', fontSize: 12.5, fontWeight: '800' },
+  container: { flex: 1, backgroundColor: COLORS.bg },
 
+  /* header controls (inside GradientHeader) */
+  exportBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)',
+  },
+  exportText: { color: '#fff', fontSize: 12.5, fontWeight: '800' },
   filterRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  filterField: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(255,255,255,0.13)', borderRadius: 14, paddingHorizontal: 10, height: 46, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
+  filterField: {
+    flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(255,255,255,0.13)',
+    borderRadius: 14, paddingHorizontal: 10, height: 46, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
   fAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.22)', justifyContent: 'center', alignItems: 'center' },
   fAvatarText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   filterText: { flex: 1, color: '#fff', fontSize: 13, fontWeight: '700' },
 
   summaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingTop: 12 },
-  sumPill: { backgroundColor: '#EEF2FF', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
-  sumText: { fontSize: 11.5, fontWeight: '700', color: INDIGO },
 
+  /* timeline */
   pointRow: { flexDirection: 'row', alignItems: 'flex-start' },
   pointTime: { width: 58, fontSize: 12.5, fontWeight: '700', color: '#374151', paddingTop: 2 },
   dotCol: { width: 22, alignItems: 'center' },
-  dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: GREEN, borderWidth: 2, borderColor: '#fff', elevation: 1, marginTop: 3 },
-  line: { flex: 1, width: 2, backgroundColor: '#E5E7EB', marginVertical: 2, minHeight: 26 },
-  pointCard: { flex: 1, backgroundColor: '#fff', borderRadius: 12, padding: 11, marginBottom: 10, elevation: 1 },
-  pointAddr: { fontSize: 12.5, color: '#111827', lineHeight: 17 },
+  dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: COLORS.green, borderWidth: 2, borderColor: '#fff', elevation: 1, marginTop: 3 },
+  line: { flex: 1, width: 2, backgroundColor: COLORS.line, marginVertical: 2, minHeight: 26 },
+  pointCard: { flex: 1, backgroundColor: COLORS.card, borderRadius: 14, padding: 12, marginBottom: 10, ...SHADOW.card },
+  pointAddr: { fontSize: 12.5, color: COLORS.ink, lineHeight: 17 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' },
-  accText: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600' },
+  accText: { fontSize: 10.5, color: COLORS.faint, fontWeight: '600' },
   recBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
   recText: { fontSize: 10, color: '#2563EB', fontWeight: '600' },
-  susBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#FEE2E2', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
-  susText: { fontSize: 10, color: RED, fontWeight: '700' },
+  susBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: COLORS.redSoft, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
+  susText: { fontSize: 10, color: COLORS.red, fontWeight: '700' },
   gapRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 4, marginBottom: 10, paddingLeft: 58 },
   gapLine: { flex: 1, height: 1, backgroundColor: '#FDE68A' },
-  gapBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF3C7', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4 },
-  gapText: { fontSize: 10.5, color: AMBER, fontWeight: '700' },
+  gapBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.orangeSoft, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4 },
+  gapText: { fontSize: 10.5, color: COLORS.orange, fontWeight: '700' },
 
   empty: { alignItems: 'center', marginTop: 60, gap: 10 },
-  emptyText: { color: '#9CA3AF', fontSize: 14, textAlign: 'center' },
+  emptyText: { color: COLORS.faint, fontSize: 14, textAlign: 'center' },
 
+  /* modals */
   sheetOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 18, paddingBottom: 26 },
-  sheetHandle: { width: 42, height: 5, borderRadius: 3, backgroundColor: '#E5E7EB', alignSelf: 'center', marginBottom: 12 },
-  sheetTitle: { fontSize: 16, fontWeight: '800', color: '#111827', marginBottom: 12, textAlign: 'center' },
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 12, height: 46, marginBottom: 10 },
-  searchInput: { flex: 1, fontSize: 14, color: '#111827' },
+  sheet: { backgroundColor: COLORS.card, borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, padding: 18, paddingBottom: 26 },
+  sheetHandle: { width: 42, height: 5, borderRadius: 3, backgroundColor: COLORS.line, alignSelf: 'center', marginBottom: 12 },
+  sheetTitle: { fontSize: 16, fontWeight: '800', color: COLORS.ink, marginBottom: 12, textAlign: 'center' },
+  searchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.field,
+    borderWidth: 1, borderColor: COLORS.line, borderRadius: RADIUS.input, paddingHorizontal: 12, height: 46, marginBottom: 10,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: COLORS.ink },
   empRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 12 },
-  empRowActive: { backgroundColor: '#EEF2FF' },
-  eAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
-  eAvatarText: { color: INDIGO, fontWeight: '800', fontSize: 13 },
-  eName: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  eSub: { fontSize: 11, color: '#9CA3AF', marginTop: 1 },
-  sheetClose: { marginTop: 10, height: 46, borderRadius: 13, borderWidth: 1.5, borderColor: '#E5E7EB', justifyContent: 'center', alignItems: 'center', flex: 1 },
+  empRowActive: { backgroundColor: COLORS.indigoSoft },
+  eAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.indigoSoft, justifyContent: 'center', alignItems: 'center' },
+  eAvatarText: { color: COLORS.primary, fontWeight: '800', fontSize: 13 },
+  eName: { fontSize: 14, fontWeight: '700', color: COLORS.ink },
+  eSub: { fontSize: 11, color: COLORS.faint, marginTop: 1 },
+  sheetClose: {
+    marginTop: 10, height: 52, borderRadius: RADIUS.button, borderWidth: 1.5,
+    borderColor: COLORS.line, justifyContent: 'center', alignItems: 'center',
+  },
   sheetCloseText: { color: '#374151', fontWeight: '700' },
 
   overlayCenter: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', padding: 20 },
-  calCard: { backgroundColor: '#fff', borderRadius: 24, padding: 16 },
+  calCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 16 },
   calBtnRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  todayBtn: { flex: 1, height: 46, borderRadius: 13, backgroundColor: INDIGO, justifyContent: 'center', alignItems: 'center' },
-  todayText: { color: '#fff', fontWeight: '800' },
 });

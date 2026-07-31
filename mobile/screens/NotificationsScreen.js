@@ -8,8 +8,9 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../lib/api';
 import { notificationsAvailable } from '../lib/notifications';
+import { GradientHeader, BottomNav, Card, SectionLabel } from '../components/ui';
+import { COLORS, RADIUS, SHADOW } from '../lib/theme';
 
-const INDIGO = '#1E3A8A';
 const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#16A34A', '#D97706', '#DC2626', '#7C3AED', '#DB2777'];
 
 const initials = (n) => (n || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -53,39 +54,33 @@ export default function NotificationsScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      <LinearGradient colors={['#1E40AF', '#1E3A8A', '#312E81']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}>
-        <View style={[styles.deco, { width: 150, height: 150, top: -55, right: -45 }]} />
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <MaterialIcons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>Notifications</Text>
-            <Text style={styles.subTitle}>
-              {items ? `${items.length} unread conversation${items.length === 1 ? '' : 's'}` : 'Loading…'}
-            </Text>
-          </View>
-        </View>
-      </LinearGradient>
+      <GradientHeader
+        title="Notifications"
+        subtitle={items ? `${items.length} unread conversation${items.length === 1 ? '' : 's'}` : 'Loading…'}
+        onBack={() => navigation.goBack()}
+      />
 
       {items === null ? (
-        <ActivityIndicator size="large" color={INDIGO} style={{ marginTop: 40 }} />
+        <View style={{ flex: 1 }}>
+          <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} />
+        </View>
       ) : (
         <ScrollView
-          contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
         >
           {/* Unread messages */}
-          <Text style={styles.sectionTitle}>MESSAGES</Text>
+          <SectionLabel text="MESSAGES" style={{ marginTop: 0 }} />
           {items.length === 0 ? (
-            <View style={styles.caughtUp}>
+            <Card style={styles.caughtUp}>
               <Text style={{ fontSize: 40 }}>🎉</Text>
               <Text style={styles.caughtUpTitle}>You're all caught up!</Text>
               <Text style={styles.caughtUpSub}>New messages will appear here.</Text>
-            </View>
+            </Card>
           ) : (
             items.map((c) => (
-              <TouchableOpacity key={`${c.kind}-${c.id}`} style={styles.card} activeOpacity={0.8} onPress={() => openItem(c)}>
+              <TouchableOpacity key={`${c.kind}-${c.id}`} style={styles.msgCard} activeOpacity={0.8} onPress={() => openItem(c)}>
                 {c.kind === 'group' ? (
                   <LinearGradient colors={['#0E7490', '#155E75']} style={styles.avatar}>
                     <MaterialIcons name="groups" size={22} color="#fff" />
@@ -96,7 +91,7 @@ export default function NotificationsScreen({ navigation }) {
                   </View>
                 )}
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <View style={styles.cardTop}>
+                  <View style={styles.msgTop}>
                     <Text style={styles.name} numberOfLines={1}>{c.name}</Text>
                     <Text style={styles.time}>{c.lastMessage ? timeAgo(c.lastMessage.at) : ''}</Text>
                   </View>
@@ -113,35 +108,35 @@ export default function NotificationsScreen({ navigation }) {
             ))
           )}
 
-          {/* Daily reminders info */}
-          <Text style={styles.sectionTitle}>DAILY REMINDERS</Text>
-          <View style={styles.remCard}>
+          {/* Daily reminders info (display-only) */}
+          <SectionLabel text="DAILY REMINDERS" />
+          <Card style={{ padding: 14 }}>
             <View style={styles.remRow}>
-              <View style={[styles.remIcon, { backgroundColor: '#ECFDF5' }]}>
-                <MaterialIcons name="alarm-on" size={19} color="#16A34A" />
+              <View style={[styles.remIcon, { backgroundColor: COLORS.greenSoft }]}>
+                <MaterialIcons name="alarm-on" size={19} color={COLORS.green} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.remTitle}>Punch-In Reminder</Text>
                 <Text style={styles.remSub}>Every day at 9:15 AM</Text>
               </View>
-              <MaterialIcons name="notifications-active" size={17} color="#16A34A" />
+              <MaterialIcons name="notifications-active" size={17} color={COLORS.green} />
             </View>
-            <View style={[styles.remRow, { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 12, marginTop: 12 }]}>
-              <View style={[styles.remIcon, { backgroundColor: '#FEF3C7' }]}>
-                <MaterialIcons name="alarm" size={19} color="#D97706" />
+            <View style={[styles.remRow, { borderTopWidth: 1, borderTopColor: COLORS.line, paddingTop: 12, marginTop: 12 }]}>
+              <View style={[styles.remIcon, { backgroundColor: COLORS.orangeSoft }]}>
+                <MaterialIcons name="alarm" size={19} color={COLORS.orange} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.remTitle}>Punch-Out Reminder</Text>
                 <Text style={styles.remSub}>Every day at 6:30 PM</Text>
               </View>
-              <MaterialIcons name="notifications-active" size={17} color="#D97706" />
+              <MaterialIcons name="notifications-active" size={17} color={COLORS.orange} />
             </View>
-          </View>
+          </Card>
           {notificationsAvailable() ? (
             <Text style={styles.note}>Reminders pop up as phone notifications — tap one to jump straight to Punch In/Out.</Text>
           ) : (
             <View style={styles.warnCard}>
-              <MaterialIcons name="info-outline" size={16} color="#D97706" />
+              <MaterialIcons name="info-outline" size={16} color={COLORS.orange} />
               <Text style={styles.warnText}>
                 Phone reminders need the installed app build — they are not supported inside Expo Go on Android.
               </Text>
@@ -149,40 +144,45 @@ export default function NotificationsScreen({ navigation }) {
           )}
         </ScrollView>
       )}
+
+      <BottomNav navigation={navigation} active="profile" />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3F4F6' },
-  header: { paddingTop: 52, paddingBottom: 16, paddingHorizontal: 16, borderBottomLeftRadius: 26, borderBottomRightRadius: 26, overflow: 'hidden', elevation: 6 },
-  deco: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.07)' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center' },
-  title: { color: '#fff', fontSize: 17, fontWeight: '800' },
-  subTitle: { color: '#C7D2FE', fontSize: 11.5, marginTop: 1 },
+  container: { flex: 1, backgroundColor: COLORS.bg },
 
-  sectionTitle: { fontSize: 11, fontWeight: '800', color: '#9CA3AF', letterSpacing: 0.8, marginBottom: 8, marginTop: 14 },
-  caughtUp: { alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, paddingVertical: 30, gap: 6, elevation: 1 },
-  caughtUpTitle: { fontSize: 15, fontWeight: '800', color: '#111827' },
-  caughtUpSub: { fontSize: 12, color: '#9CA3AF' },
+  caughtUp: { alignItems: 'center', paddingVertical: 30, gap: 6 },
+  caughtUpTitle: { fontSize: 15, fontWeight: '800', color: COLORS.ink },
+  caughtUpSub: { fontSize: 12, color: COLORS.faint },
 
-  card: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 16, padding: 13, marginBottom: 8, elevation: 1, borderLeftWidth: 3, borderLeftColor: '#4F46E5' },
+  msgCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: COLORS.card, borderRadius: RADIUS.card, padding: 13, marginBottom: 8,
+    borderLeftWidth: 3, borderLeftColor: COLORS.accent, ...SHADOW.card,
+  },
   avatar: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
   avatarText: { color: '#fff', fontSize: 14, fontWeight: '800' },
-  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  name: { flex: 1, fontSize: 14, fontWeight: '800', color: '#111827' },
-  time: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600' },
-  preview: { fontSize: 12.5, color: '#4B5563', marginTop: 2, fontWeight: '600' },
-  unreadBadge: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: '#16A34A', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
+  msgTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  name: { flex: 1, fontSize: 14, fontWeight: '800', color: COLORS.ink },
+  time: { fontSize: 10.5, color: COLORS.faint, fontWeight: '600' },
+  preview: { fontSize: 12.5, color: COLORS.sub, marginTop: 2, fontWeight: '600' },
+  unreadBadge: {
+    minWidth: 22, height: 22, borderRadius: 11, backgroundColor: COLORS.green,
+    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6,
+  },
   unreadText: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
-  remCard: { backgroundColor: '#fff', borderRadius: 16, padding: 14, elevation: 1 },
   remRow: { flexDirection: 'row', alignItems: 'center', gap: 11 },
   remIcon: { width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  remTitle: { fontSize: 13.5, fontWeight: '800', color: '#111827' },
-  remSub: { fontSize: 11.5, color: '#6B7280', fontWeight: '600', marginTop: 1 },
-  note: { fontSize: 11, color: '#9CA3AF', marginTop: 10, textAlign: 'center', fontStyle: 'italic' },
-  warnCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FEF3C7', borderRadius: 12, padding: 12, marginTop: 10 },
+  remTitle: { fontSize: 13.5, fontWeight: '800', color: COLORS.ink },
+  remSub: { fontSize: 11.5, color: COLORS.sub, fontWeight: '600', marginTop: 1 },
+
+  note: { fontSize: 11, color: COLORS.faint, marginTop: 10, textAlign: 'center', fontStyle: 'italic' },
+  warnCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: COLORS.orangeSoft, borderRadius: 12, padding: 12, marginTop: 10,
+  },
   warnText: { flex: 1, fontSize: 11.5, color: '#92400E', fontWeight: '600', lineHeight: 16 },
 });

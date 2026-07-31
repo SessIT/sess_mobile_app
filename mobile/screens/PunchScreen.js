@@ -10,11 +10,9 @@ import * as Location from 'expo-location';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { api, API_URL } from '../lib/api';
 import { startTracking, stopTracking, TRACK_INTERVAL_MIN, pendingCount } from '../lib/tracker';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton } from '../components/ui';
+import { COLORS, GREEN_GRADIENT, RADIUS, SHADOW } from '../lib/theme';
 
-const INDIGO = '#1E3A8A';
-const GREEN = '#16A34A';
-const RED = '#DC2626';
-const AMBER = '#D97706';
 const BASE = API_URL.replace('/api', '');
 
 const fmtTime = (d) => d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '--:--';
@@ -314,7 +312,7 @@ export default function PunchScreen({ navigation }) {
   const detailIdx = detailModal ? sessions.findIndex(s => s.id === detailModal.id) : -1;
   const detail = detailModal ? {
     label: sessionLabel(detailModal, Math.max(detailIdx, 0)),
-    color: detailModal.punchOutTime ? INDIGO : GREEN,
+    color: detailModal.punchOutTime ? COLORS.primary : COLORS.green,
     inPhoto: detailModal.punchInPhoto ? `${BASE}/${detailModal.punchInPhoto}` : null,
     outPhoto: detailModal.punchOutPhoto ? `${BASE}/${detailModal.punchOutPhoto}` : null,
     inTime: fmtTime(detailModal.punchInTime),
@@ -333,35 +331,26 @@ export default function PunchScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* ===== Gradient hero header ===== */}
-      <LinearGradient
-        colors={['#1E40AF', '#1E3A8A', '#312E81']}
-        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={styles.header}
+      {/* ===== Gradient hero header: title row + live clock ===== */}
+      <GradientHeader
+        title="Attendance"
+        onBack={() => navigation.goBack()}
+        right={punchedIn ? (
+          <View style={styles.liveTag}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveTagText}>ON DUTY</Text>
+          </View>
+        ) : null}
       >
-        <View style={[styles.deco, { width: 170, height: 170, top: -60, right: -50 }]} />
-        <View style={[styles.deco, { width: 100, height: 100, bottom: -35, left: -25 }]} />
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <MaterialIcons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.title}>Attendance</Text>
-          {punchedIn && (
-            <View style={styles.liveTag}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveTagText}>ON DUTY</Text>
-            </View>
-          )}
-        </View>
         <Text style={styles.clock}>{now.toLocaleTimeString('en-IN')}</Text>
         <Text style={styles.date}>{now.toDateString()}</Text>
-      </LinearGradient>
+      </GradientHeader>
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        {loading ? <ActivityIndicator size="large" color={INDIGO} style={{ marginTop: 40 }} /> : (!permission?.granted || !locPermission?.granted) ? (
-          <View style={styles.permCard}>
+        {loading ? <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} /> : (!permission?.granted || !locPermission?.granted) ? (
+          <Card style={styles.permCard}>
             <View style={styles.permIcon}>
-              <MaterialIcons name="verified-user" size={30} color={INDIGO} />
+              <MaterialIcons name="verified-user" size={30} color={COLORS.primary} />
             </View>
             <Text style={styles.permTitle}>Access Required</Text>
             <Text style={styles.permText}>
@@ -370,34 +359,33 @@ export default function PunchScreen({ navigation }) {
 
             {/* Which permissions are still missing */}
             <View style={styles.permStatusRow}>
-              <View style={styles.permStatusItem}>
-                <MaterialIcons
-                  name={permission?.granted ? 'check-circle' : 'cancel'}
-                  size={16}
-                  color={permission?.granted ? GREEN : RED}
-                />
-                <Text style={styles.permStatusText}>Camera</Text>
-              </View>
-              <View style={styles.permStatusItem}>
-                <MaterialIcons
-                  name={locPermission?.granted ? 'check-circle' : 'cancel'}
-                  size={16}
-                  color={locPermission?.granted ? GREEN : RED}
-                />
-                <Text style={styles.permStatusText}>Location</Text>
-              </View>
+              <Chip
+                text="Camera"
+                icon={permission?.granted ? 'check-circle' : 'cancel'}
+                color={permission?.granted ? COLORS.green : COLORS.red}
+                soft={permission?.granted ? COLORS.greenSoft : COLORS.redSoft}
+              />
+              <Chip
+                text="Location"
+                icon={locPermission?.granted ? 'check-circle' : 'cancel'}
+                color={locPermission?.granted ? COLORS.green : COLORS.red}
+                soft={locPermission?.granted ? COLORS.greenSoft : COLORS.redSoft}
+              />
             </View>
 
-            <TouchableOpacity style={styles.permBtn} activeOpacity={0.85} onPress={requestAllPermissions}>
-              <MaterialIcons name="lock-open" size={17} color="#fff" />
-              <Text style={styles.permBtnText}>Allow Access</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => Linking.openSettings()} style={{ marginTop: 12 }}>
+            <PrimaryButton
+              title="Allow Access"
+              icon="lock"
+              onPress={requestAllPermissions}
+              style={{ width: '100%', marginTop: 18 }}
+            />
+            <TouchableOpacity onPress={() => Linking.openSettings()} style={{ marginTop: 14 }}>
               <Text style={styles.permSettingsLink}>Already denied? Open device Settings</Text>
             </TouchableOpacity>
-          </View>
+          </Card>
         ) : (
           <>
+            {/* Big circular selfie preview with white ring */}
             <View style={styles.camRing}>
               <View style={styles.camWrap}>
                 <CameraView ref={cameraRef} facing="front" style={{ flex: 1 }} />
@@ -405,8 +393,8 @@ export default function PunchScreen({ navigation }) {
             </View>
 
             <View style={[styles.locChip, locError && styles.locChipError]}>
-              <View style={[styles.locDot, { backgroundColor: locError ? RED : locReady ? GREEN : AMBER }]} />
-              <Text style={[styles.locChipText, locError && { color: RED }]} numberOfLines={2}>
+              <View style={[styles.locDot, { backgroundColor: locError ? COLORS.red : locReady ? COLORS.green : COLORS.orange }]} />
+              <Text style={[styles.locChipText, locError && { color: COLORS.red }]} numberOfLines={2}>
                 {locError
                   ? locError
                   : locReady
@@ -420,15 +408,15 @@ export default function PunchScreen({ navigation }) {
                 dead fix must not contradict the red GPS-off chip. */}
             {geo.active && geo.match && !locError && (
               <View style={styles.geoOk}>
-                <MaterialIcons name="check-circle" size={15} color={GREEN} />
+                <MaterialIcons name="check-circle" size={15} color={COLORS.green} />
                 <Text style={styles.geoOkText} numberOfLines={1}>
-                  {geo.match.name} · {fmtDist(geo.matchDist)} away
+                  {geo.match.name} • {fmtDist(geo.matchDist)} away
                 </Text>
               </View>
             )}
             {geoBlocked && (
               <View style={styles.geoErr}>
-                <MaterialIcons name="location-off" size={16} color={RED} />
+                <MaterialIcons name="location-off" size={16} color={COLORS.red} />
                 <Text style={styles.geoErrText}>
                   You are in the wrong location.
                   {geo.nearest ? ` Nearest site: ${geo.nearest.name} — ${fmtDist(geo.nearestDist)} away.` : ''}
@@ -444,7 +432,7 @@ export default function PunchScreen({ navigation }) {
                 ? ['#F59E0B', '#D97706']                     // amber = retry / re-check
                 : locating
                   ? ['#9CA3AF', '#9CA3AF']                   // grey = waiting
-                  : punchedIn ? ['#EF4444', '#B91C1C'] : ['#22C55E', '#15803D'];
+                  : punchedIn ? ['#EF4444', '#B91C1C'] : GREEN_GRADIENT;
               const icon = locError || geoBlocked ? 'refresh' : locating ? 'location-searching' : 'photo-camera';
               const label = locError ? 'RETRY LOCATION'
                 : geoBlocked ? 'RE-CHECK LOCATION'
@@ -473,8 +461,9 @@ export default function PunchScreen({ navigation }) {
 
         {!loading && (
           <>
+            {/* Day status pill — "Day not started" / live total */}
             <View style={styles.hoursPill}>
-              <MaterialIcons name="timer" size={15} color={INDIGO} />
+              <MaterialIcons name="timer" size={15} color={COLORS.primary} />
               <Text style={styles.hoursText}>
                 {punchedIn
                   ? `${fmtDuration(totalHours)} today (live)`
@@ -500,14 +489,14 @@ export default function PunchScreen({ navigation }) {
                   <React.Fragment key={s.id}>
                     {i > 0 && sessions[i - 1].punchOutTime && (
                       <View style={styles.travelRow}>
-                        <MaterialIcons name="directions-car" size={14} color={AMBER} />
+                        <MaterialIcons name="directions-car" size={14} color={COLORS.orange} />
                         <Text style={styles.travelText}>
                           Travel: {fmtDuration((new Date(s.punchInTime) - new Date(sessions[i - 1].punchOutTime)) / 3600000)}
                         </Text>
                       </View>
                     )}
                     <TouchableOpacity style={styles.sessCard} activeOpacity={0.85} onPress={() => setDetailModal(s)}>
-                      <View style={[styles.sessBar, { backgroundColor: s.punchOutTime ? '#9CA3AF' : GREEN }]} />
+                      <View style={[styles.sessBar, { backgroundColor: s.punchOutTime ? COLORS.faint : COLORS.green }]} />
                       <View style={styles.sessHead}>
                         <Text style={styles.sessLabel}>{sessionLabel(s, i)}</Text>
                         {s.isLate && <View style={styles.lateBadge}><Text style={styles.lateText}>LATE</Text></View>}
@@ -516,7 +505,7 @@ export default function PunchScreen({ navigation }) {
                       </View>
                       <View style={styles.sessTimeRow}>
                         <Text style={styles.sessTime}>{fmtTime(s.punchInTime)}</Text>
-                        <MaterialIcons name="arrow-forward" size={13} color="#9CA3AF" />
+                        <MaterialIcons name="arrow-forward" size={13} color={COLORS.faint} />
                         <Text style={styles.sessTime}>{fmtTime(s.punchOutTime)}</Text>
                         <Text style={styles.sessDur}>
                           {s.punchOutTime
@@ -525,7 +514,7 @@ export default function PunchScreen({ navigation }) {
                         </Text>
                       </View>
                       <View style={styles.pAddrRow}>
-                        <MaterialIcons name="location-on" size={13} color="#6B7280" />
+                        <MaterialIcons name="location-on" size={13} color={COLORS.sub} />
                         <Text style={styles.pAddr} numberOfLines={1}>{s.punchInAddress || 'No address'}</Text>
                       </View>
                     </TouchableOpacity>
@@ -537,11 +526,11 @@ export default function PunchScreen({ navigation }) {
         )}
       </ScrollView>
 
-      {/* ===== POPUP 1: Confirm ===== */}
-      <Modal visible={!!pendingPhoto} transparent animationType="fade">
-        <View style={styles.overlay}>
-          <View style={styles.mCard}>
-            <View style={[styles.mHeadStrip, { backgroundColor: punchedIn ? RED : GREEN }]} />
+      {/* ===== POPUP 1: Confirm — white rounded-top bottom sheet ===== */}
+      <Modal visible={!!pendingPhoto} transparent animationType="slide">
+        <View style={styles.sheetWrap}>
+          <View style={styles.sheet}>
+            <View style={[styles.mHeadStrip, { backgroundColor: punchedIn ? COLORS.red : COLORS.green }]} />
             <Text style={styles.mTitle}>Confirm {punchedIn ? 'Punch Out' : 'Punch In'}</Text>
             <Text style={styles.mSub}>Verify pannitu confirm pannunga</Text>
 
@@ -553,7 +542,7 @@ export default function PunchScreen({ navigation }) {
 
             {!punchedIn && (
               <View style={styles.siteField}>
-                <MaterialIcons name="business" size={16} color={INDIGO} />
+                <MaterialIcons name="business" size={16} color={COLORS.primary} />
                 <TextInput
                   style={styles.siteInput}
                   // Live-sync: if the geofence match changes while this modal is
@@ -561,15 +550,15 @@ export default function PunchScreen({ navigation }) {
                   value={geo.match ? geo.match.name : siteName}
                   onChangeText={setSiteName}
                   placeholder="Company / Site name"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={COLORS.faint}
                   maxLength={60}
                   editable={!geo.match} // matched site is authoritative
                 />
                 {geo.match ? (
-                  <MaterialIcons name="verified" size={17} color={GREEN} />
+                  <MaterialIcons name="verified" size={17} color={COLORS.green} />
                 ) : siteName !== 'SESS' && (
                   <TouchableOpacity onPress={() => setSiteName('SESS')}>
-                    <MaterialIcons name="restart-alt" size={17} color="#9CA3AF" />
+                    <MaterialIcons name="restart-alt" size={17} color={COLORS.faint} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -577,13 +566,13 @@ export default function PunchScreen({ navigation }) {
 
             <View style={styles.mChipCol}>
               <View style={styles.mChip}>
-                <MaterialIcons name="schedule" size={15} color={INDIGO} />
+                <MaterialIcons name="schedule" size={15} color={COLORS.primary} />
                 <Text style={styles.mChipText}>
                   {capturedAt ? `${capturedAt.toLocaleTimeString('en-IN')} • ${capturedAt.toDateString()}` : ''}
                 </Text>
               </View>
               <View style={styles.mChip}>
-                <MaterialIcons name="location-on" size={15} color={locReady ? GREEN : AMBER} />
+                <MaterialIcons name="location-on" size={15} color={locReady ? COLORS.green : COLORS.orange} />
                 <Text style={styles.mChipText} numberOfLines={2}>
                   {prefetchRef.current.address || (locReady ? 'Coordinates captured' : 'Locating…')}
                 </Text>
@@ -597,7 +586,7 @@ export default function PunchScreen({ navigation }) {
               </TouchableOpacity>
               <TouchableOpacity style={{ flex: 1 }} disabled={busy} activeOpacity={0.85} onPress={confirmPunch}>
                 <LinearGradient
-                  colors={punchedIn ? ['#EF4444', '#B91C1C'] : ['#22C55E', '#15803D']}
+                  colors={punchedIn ? ['#EF4444', '#B91C1C'] : GREEN_GRADIENT}
                   start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                   style={styles.fillBtn}
                 >
@@ -620,7 +609,7 @@ export default function PunchScreen({ navigation }) {
         <View style={styles.overlay}>
           <View style={styles.mCard}>
             <View style={styles.alertIcon}>
-              <MaterialIcons name="location-off" size={30} color={RED} />
+              <MaterialIcons name="location-off" size={30} color={COLORS.red} />
             </View>
             <Text style={styles.mTitle}>Location Required</Text>
             <Text style={[styles.mSub, { textAlign: 'center', marginBottom: 18 }]}>
@@ -652,21 +641,21 @@ export default function PunchScreen({ navigation }) {
             <View style={styles.mCard}>
               <View style={[styles.mHeadStrip, { backgroundColor: detail.color }]} />
               <View style={styles.dHead}>
-                <View style={[styles.dIconWrap, { backgroundColor: '#EEF2FF' }]}>
-                  <MaterialIcons name="work" size={20} color={INDIGO} />
+                <View style={[styles.dIconWrap, { backgroundColor: COLORS.indigoSoft }]}>
+                  <MaterialIcons name="work" size={20} color={COLORS.primary} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.mTitle}>{detail.label}</Text>
                   <Text style={styles.mSub}>{detail.dateStr} • {detail.dur}{detail.late ? ' • Late' : ''}</Text>
                 </View>
                 <TouchableOpacity style={styles.dClose} onPress={() => setDetailModal(null)}>
-                  <MaterialIcons name="close" size={20} color="#6B7280" />
+                  <MaterialIcons name="close" size={20} color={COLORS.sub} />
                 </TouchableOpacity>
               </View>
 
               <View style={styles.photoPair}>
                 <View style={styles.photoCol}>
-                  <Text style={[styles.photoLabel, { color: GREEN }]}>IN • {detail.inTime}</Text>
+                  <Text style={[styles.photoLabel, { color: COLORS.green }]}>IN • {detail.inTime}</Text>
                   {detail.inPhoto ? (
                     <Image source={{ uri: detail.inPhoto }} style={styles.photoBig} />
                   ) : (
@@ -676,7 +665,7 @@ export default function PunchScreen({ navigation }) {
                   )}
                 </View>
                 <View style={styles.photoCol}>
-                  <Text style={[styles.photoLabel, { color: RED }]}>OUT • {detail.outTime}</Text>
+                  <Text style={[styles.photoLabel, { color: COLORS.red }]}>OUT • {detail.outTime}</Text>
                   {detail.outPhoto ? (
                     <Image source={{ uri: detail.outPhoto }} style={styles.photoBig} />
                   ) : (
@@ -688,14 +677,14 @@ export default function PunchScreen({ navigation }) {
               </View>
 
               <View style={styles.dRow}>
-                <MaterialIcons name="location-on" size={16} color={GREEN} />
+                <MaterialIcons name="location-on" size={16} color={COLORS.green} />
                 <Text style={styles.dRowText}>
                   {detail.inAddr || 'No address'}{detail.inAcc != null ? `  (±${Math.round(detail.inAcc)}m)` : ''}
                 </Text>
               </View>
               {detail.outTime !== '--:--' && (
                 <View style={styles.dRow}>
-                  <MaterialIcons name="location-on" size={16} color={RED} />
+                  <MaterialIcons name="location-on" size={16} color={COLORS.red} />
                   <Text style={styles.dRowText}>
                     {detail.outAddr || 'No address'}{detail.outAcc != null ? `  (±${Math.round(detail.outAcc)}m)` : ''}
                   </Text>
@@ -705,104 +694,107 @@ export default function PunchScreen({ navigation }) {
           )}
         </View>
       </Modal>
+
+      <BottomNav navigation={navigation} active="punch" />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3F4F6' },
+  container: { flex: 1, backgroundColor: COLORS.bg },
 
-  header: { paddingTop: 52, paddingBottom: 22, paddingHorizontal: 18, borderBottomLeftRadius: 26, borderBottomRightRadius: 26, overflow: 'hidden', elevation: 6 },
-  deco: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.07)' },
-  headerRow: { flexDirection: 'row', alignItems: 'center' },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  title: { color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 },
+  /* header hero */
   liveTag: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 14, paddingHorizontal: 9, paddingVertical: 4 },
   liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4ADE80' },
   liveTagText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  clock: { color: '#fff', fontSize: 34, fontWeight: '800', marginTop: 14, letterSpacing: 0.5 },
-  date: { color: '#C7D2FE', fontSize: 13, marginTop: 2 },
+  clock: { color: '#fff', fontSize: 36, fontWeight: '800', marginTop: 16, letterSpacing: 0.5 },
+  date: { color: '#C7D2FE', fontSize: 13, marginTop: 2, fontWeight: '600' },
 
-  body: { alignItems: 'center', padding: 20, paddingBottom: 40 },
+  body: { alignItems: 'center', padding: 20, paddingBottom: 32 },
 
-  camRing: { padding: 5, borderRadius: 110, backgroundColor: '#fff', elevation: 5, shadowColor: INDIGO, shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
-  camWrap: { width: 190, height: 190, borderRadius: 95, overflow: 'hidden', backgroundColor: '#E5E7EB' },
+  /* circular camera + white ring */
+  camRing: { padding: 6, borderRadius: 131, backgroundColor: COLORS.card, ...SHADOW.raised, shadowColor: '#1E3A8A' },
+  camWrap: { width: 250, height: 250, borderRadius: 125, overflow: 'hidden', backgroundColor: COLORS.line },
 
-  locChip: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, elevation: 1, maxWidth: '92%' },
+  locChip: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14, backgroundColor: COLORS.card, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, maxWidth: '92%', ...SHADOW.card },
   locChipError: { backgroundColor: '#FEF2F2' },
   locDot: { width: 7, height: 7, borderRadius: 4 },
-  locChipText: { flexShrink: 1, fontSize: 11.5, color: '#374151', fontWeight: '600' },
+  locChipText: { flexShrink: 1, fontSize: 12, color: '#374151', fontWeight: '700' },
 
-  geoOk: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, backgroundColor: '#ECFDF5', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, maxWidth: '92%', borderWidth: 1, borderColor: '#BBF7D0' },
-  geoOkText: { flexShrink: 1, fontSize: 11.5, color: '#166534', fontWeight: '800' },
+  geoOk: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, backgroundColor: COLORS.greenSoft, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, maxWidth: '92%', borderWidth: 1, borderColor: '#BBF7D0' },
+  geoOkText: { flexShrink: 1, fontSize: 12, color: '#166534', fontWeight: '800' },
   geoErr: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 8, backgroundColor: '#FEF2F2', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 9, maxWidth: '92%', borderWidth: 1, borderColor: '#FECACA' },
-  geoErrText: { flex: 1, fontSize: 11.5, color: RED, fontWeight: '700', lineHeight: 16 },
+  geoErrText: { flex: 1, fontSize: 11.5, color: COLORS.red, fontWeight: '700', lineHeight: 16 },
 
-  punchBtn: { marginTop: 14, borderRadius: 27, elevation: 3, width: '78%' },
+  punchBtn: { marginTop: 16, borderRadius: 28, elevation: 3, width: '86%' },
   punchBtnDisabled: { elevation: 0 },
-  punchGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: 27 },
-  punchText: { color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: 0.4 },
+  punchGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 54, borderRadius: 28 },
+  punchText: { color: '#fff', fontSize: 15.5, fontWeight: '800', letterSpacing: 0.5 },
 
-  permCard: { width: '100%', backgroundColor: '#fff', borderRadius: 20, padding: 22, alignItems: 'center', elevation: 2 },
-  permIcon: { width: 58, height: 58, borderRadius: 29, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
-  permTitle: { fontSize: 16, fontWeight: '800', color: '#111827', marginTop: 10 },
-  permText: { color: '#6B7280', fontSize: 12.5, textAlign: 'center', marginTop: 6, lineHeight: 18 },
-  permBtn: { flexDirection: 'row', gap: 7, alignItems: 'center', marginTop: 16, backgroundColor: INDIGO, borderRadius: 13, paddingHorizontal: 22, paddingVertical: 12, elevation: 2 },
-  permBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  permStatusRow: { flexDirection: 'row', gap: 18, marginTop: 14 },
-  permStatusItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  permStatusText: { fontSize: 12.5, fontWeight: '700', color: '#374151' },
-  permSettingsLink: { fontSize: 12, color: INDIGO, fontWeight: '700', textDecorationLine: 'underline' },
+  /* permission card (page 5) */
+  permCard: { width: '100%', padding: 22, alignItems: 'center' },
+  permIcon: { width: 62, height: 62, borderRadius: 31, backgroundColor: COLORS.indigoSoft, justifyContent: 'center', alignItems: 'center' },
+  permTitle: { fontSize: 17, fontWeight: '800', color: COLORS.ink, marginTop: 12 },
+  permText: { color: COLORS.sub, fontSize: 12.5, textAlign: 'center', marginTop: 6, lineHeight: 18 },
+  permStatusRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
+  permSettingsLink: { fontSize: 12, color: COLORS.primary, fontWeight: '700', textDecorationLine: 'underline' },
 
-  hoursPill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#EEF2FF', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, marginTop: 18 },
-  hoursText: { color: INDIGO, fontWeight: '700', fontSize: 13 },
-  trackChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#ECFDF5', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6, marginTop: 8 },
-  trackDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: GREEN },
+  hoursPill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.indigoSoft, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, marginTop: 18 },
+  hoursText: { color: COLORS.primary, fontWeight: '700', fontSize: 13 },
+  trackChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.greenSoft, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6, marginTop: 8 },
+  trackDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.green },
   trackText: { color: '#166534', fontSize: 12, fontWeight: '600' },
 
-  travelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center', backgroundColor: '#FEF3C7', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5 },
-  travelText: { color: AMBER, fontSize: 11.5, fontWeight: '800' },
-  sessCard: { backgroundColor: '#fff', borderRadius: 16, padding: 12, elevation: 1, overflow: 'hidden', shadowColor: '#1E3A8A', shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } },
+  travelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center', backgroundColor: COLORS.orangeSoft, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5 },
+  travelText: { color: COLORS.orange, fontSize: 11.5, fontWeight: '800' },
+  sessCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.card, padding: 13, overflow: 'hidden', ...SHADOW.card },
   sessBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
   sessHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 },
-  sessLabel: { fontSize: 12.5, fontWeight: '900', color: '#111827', flex: 1 },
-  openPill: { backgroundColor: '#ECFDF5', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
-  openPillText: { color: GREEN, fontSize: 9, fontWeight: '800' },
+  sessLabel: { fontSize: 12.5, fontWeight: '900', color: COLORS.ink, flex: 1 },
+  openPill: { backgroundColor: COLORS.greenSoft, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+  openPillText: { color: COLORS.green, fontSize: 9, fontWeight: '800' },
   sessTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
-  sessTime: { fontSize: 15, fontWeight: '800', color: '#111827' },
-  sessDur: { marginLeft: 'auto', color: INDIGO, fontSize: 11.5, fontWeight: '800', backgroundColor: '#EEF2FF', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3 },
-  lateBadge: { backgroundColor: '#FEE2E2', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-  lateText: { color: RED, fontSize: 9, fontWeight: '800' },
+  sessTime: { fontSize: 15, fontWeight: '800', color: COLORS.ink },
+  sessDur: { marginLeft: 'auto', color: COLORS.primary, fontSize: 11.5, fontWeight: '800', backgroundColor: COLORS.indigoSoft, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3 },
+  lateBadge: { backgroundColor: COLORS.redSoft, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  lateText: { color: COLORS.red, fontSize: 9, fontWeight: '800' },
   pAddrRow: { flexDirection: 'row', gap: 4, marginTop: 6, alignItems: 'flex-start' },
-  pAddr: { flex: 1, fontSize: 11, color: '#6B7280', lineHeight: 15 },
+  pAddr: { flex: 1, fontSize: 11, color: COLORS.sub, lineHeight: 15 },
 
+  /* modals */
   overlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.6)', justifyContent: 'center', padding: 22 },
-  mCard: { backgroundColor: '#fff', borderRadius: 24, padding: 20, alignItems: 'center', overflow: 'hidden', elevation: 8 },
+  sheetWrap: { flex: 1, backgroundColor: 'rgba(15,23,42,0.6)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: COLORS.card, borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet,
+    padding: 20, paddingBottom: 30, alignItems: 'center', overflow: 'hidden', elevation: 10,
+  },
+  mCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 20, alignItems: 'center', overflow: 'hidden', elevation: 8 },
   mHeadStrip: { position: 'absolute', top: 0, left: 0, right: 0, height: 5 },
-  mTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginTop: 6 },
-  mSub: { fontSize: 12.5, color: '#6B7280', marginTop: 3 },
+  mTitle: { fontSize: 18, fontWeight: '800', color: COLORS.ink, marginTop: 6 },
+  mSub: { fontSize: 12.5, color: COLORS.sub, marginTop: 3 },
   previewFrame: { padding: 4, borderRadius: 20, backgroundColor: '#F3F4F6', marginTop: 14 },
-  preview: { width: 190, height: 190, borderRadius: 16, backgroundColor: '#E5E7EB' },
-  siteField: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%', backgroundColor: '#F9FAFB', borderWidth: 1.5, borderColor: '#E0E7FF', borderRadius: 12, paddingHorizontal: 12, height: 48, marginTop: 14 },
-  siteInput: { flex: 1, fontSize: 14, fontWeight: '700', color: '#111827' },
-  mChipCol: { width: '100%', gap: 8, marginTop: 14 },
-  mChip: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', paddingHorizontal: 11, paddingVertical: 9 },
+  preview: { width: 200, height: 200, borderRadius: 16, backgroundColor: COLORS.line },
+  siteField: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%', backgroundColor: COLORS.indigoSoft, borderWidth: 1.5, borderColor: '#E0E7FF', borderRadius: RADIUS.input, paddingHorizontal: 12, height: 48, marginTop: 14 },
+  siteInput: { flex: 1, fontSize: 14, fontWeight: '700', color: COLORS.ink },
+  mChipCol: { width: '100%', gap: 8, marginTop: 12 },
+  mChip: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, backgroundColor: COLORS.field, borderRadius: RADIUS.input, borderWidth: 1, borderColor: '#F3F4F6', paddingHorizontal: 11, paddingVertical: 10 },
   mChipText: { flex: 1, fontSize: 12, color: '#374151', fontWeight: '600', lineHeight: 16 },
   mBtnRow: { flexDirection: 'row', gap: 10, width: '100%', marginTop: 16 },
-  outlineBtn: { flex: 1, flexDirection: 'row', gap: 5, height: 48, borderRadius: 13, borderWidth: 1.5, borderColor: '#E5E7EB', justifyContent: 'center', alignItems: 'center' },
+  outlineBtn: { flex: 1, flexDirection: 'row', gap: 5, height: 48, borderRadius: RADIUS.button, borderWidth: 1.5, borderColor: COLORS.line, backgroundColor: COLORS.card, justifyContent: 'center', alignItems: 'center' },
   outlineText: { color: '#374151', fontWeight: '700' },
-  fillBtn: { flexDirection: 'row', gap: 6, height: 48, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
+  fillBtn: { flexDirection: 'row', gap: 6, height: 48, borderRadius: RADIUS.button, justifyContent: 'center', alignItems: 'center' },
   fillText: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  mNote: { fontSize: 10.5, color: '#9CA3AF', marginTop: 12 },
-  alertIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#FEE2E2', justifyContent: 'center', alignItems: 'center', marginTop: 4 },
+  mNote: { fontSize: 10.5, color: COLORS.faint, marginTop: 12 },
+  alertIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: COLORS.redSoft, justifyContent: 'center', alignItems: 'center', marginTop: 4 },
 
+  /* session detail */
   dHead: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%', marginTop: 4 },
   dIconWrap: { width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   dClose: { marginLeft: 'auto', width: 34, height: 34, borderRadius: 17, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' },
   photoPair: { flexDirection: 'row', gap: 10, marginTop: 14, width: '100%' },
   photoCol: { flex: 1 },
   photoLabel: { fontSize: 10.5, fontWeight: '800', marginBottom: 6 },
-  photoBig: { width: '100%', height: 150, borderRadius: 14, backgroundColor: '#E5E7EB' },
+  photoBig: { width: '100%', height: 150, borderRadius: 14, backgroundColor: COLORS.line },
   photoEmpty: { justifyContent: 'center', alignItems: 'center' },
   dRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, width: '100%', marginTop: 12, paddingHorizontal: 4 },
   dRowText: { flex: 1, fontSize: 13, color: '#374151', fontWeight: '600', lineHeight: 18 },

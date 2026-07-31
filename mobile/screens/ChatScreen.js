@@ -6,13 +6,13 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { api, apiUpload, API_URL } from '../lib/api';
+import { GradientHeader } from '../components/ui';
+import { COLORS, SHADOW } from '../lib/theme';
 
 const BASE = API_URL.replace('/api', '');
-const INDIGO = '#1E3A8A';
 const POLL_MS = 4000;
 const NAME_COLORS = ['#4F46E5', '#0891B2', '#16A34A', '#D97706', '#DC2626', '#7C3AED', '#DB2777'];
 
@@ -256,23 +256,26 @@ export default function ChatScreen({ route, navigation }) {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.container}>
         <StatusBar style="light" />
-        <LinearGradient colors={['#1E40AF', '#1E3A8A', '#312E81']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <MaterialIcons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <View style={styles.avatar}>
-            {isGroup
-              ? <MaterialIcons name="groups" size={20} color="#fff" />
-              : <Text style={styles.avatarText}>{initials(title)}</Text>}
+        {/* Compact thread header: back · avatar · name/subtitle, inside the shared gradient */}
+        <GradientHeader style={styles.header}>
+          <View style={styles.headRow}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+              <MaterialIcons name="arrow-back" size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.avatar}>
+              {isGroup
+                ? <MaterialIcons name="groups" size={20} color="#fff" />
+                : <Text style={styles.avatarText}>{initials(title)}</Text>}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title} numberOfLines={1}>{title}</Text>
+              <Text style={styles.subTitle} numberOfLines={1}>{subtitle}</Text>
+            </View>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title} numberOfLines={1}>{title}</Text>
-            <Text style={styles.subTitle} numberOfLines={1}>{subtitle}</Text>
-          </View>
-        </LinearGradient>
+        </GradientHeader>
 
         {messages === null ? (
-          <ActivityIndicator size="large" color={INDIGO} style={{ marginTop: 40 }} />
+          <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} />
         ) : (
           <View style={{ flex: 1 }}>
             <FlatList
@@ -369,15 +372,15 @@ export default function ChatScreen({ route, navigation }) {
         {/* Composer */}
         <View style={styles.composer}>
           <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={pickFromGallery}>
-            <MaterialIcons name="photo-library" size={21} color={INDIGO} />
+            <MaterialIcons name="photo-library" size={21} color={COLORS.primary} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={takePhoto}>
-            <MaterialIcons name="photo-camera" size={21} color={INDIGO} />
+            <MaterialIcons name="photo-camera" size={21} color={COLORS.primary} />
           </TouchableOpacity>
           <TextInput
             style={styles.input}
             placeholder={uploading ? 'Sharing media…' : 'Type a message…'}
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={COLORS.faint}
             value={text}
             onChangeText={setText}
             multiline
@@ -470,42 +473,45 @@ export default function ChatScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#EEF1F6' },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 50, paddingBottom: 14, paddingHorizontal: 14, elevation: 6 },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center' },
-  avatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
+  container: { flex: 1, backgroundColor: COLORS.bg },
+
+  /* header (custom row rendered as GradientHeader children) */
+  header: { paddingBottom: 14 },
+  headRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center' },
+  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
   avatarText: { color: '#fff', fontSize: 13, fontWeight: '800' },
   title: { color: '#fff', fontSize: 15.5, fontWeight: '800' },
-  subTitle: { color: '#C7D2FE', fontSize: 11 },
+  subTitle: { color: '#C7D2FE', fontSize: 11, marginTop: 1 },
 
   empty: { alignItems: 'center', paddingVertical: 60, gap: 8 },
-  emptyText: { color: '#9CA3AF', fontSize: 13, textAlign: 'center' },
+  emptyText: { color: COLORS.faint, fontSize: 13, textAlign: 'center' },
 
   dayWrap: { alignSelf: 'center', backgroundColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3, marginVertical: 8 },
   dayText: { fontSize: 10.5, color: '#475569', fontWeight: '700' },
 
   bubbleRow: { flexDirection: 'row', marginVertical: 3 },
   bubble: { maxWidth: '80%', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
-  bubbleMine: { backgroundColor: INDIGO, borderBottomRightRadius: 4 },
-  bubbleTheirs: { backgroundColor: '#fff', borderBottomLeftRadius: 4, elevation: 1 },
+  bubbleMine: { backgroundColor: COLORS.primary, borderBottomRightRadius: 4 },
+  bubbleTheirs: { backgroundColor: COLORS.card, borderBottomLeftRadius: 4, ...SHADOW.card, elevation: 1 },
   senderName: { fontSize: 11, fontWeight: '800', marginBottom: 2 },
-  bubbleText: { fontSize: 14, color: '#111827', lineHeight: 19 },
+  bubbleText: { fontSize: 14, color: COLORS.ink, lineHeight: 19 },
   bubbleTaggedMe: { borderWidth: 1.5, borderColor: '#F59E0B', backgroundColor: '#FFFBEB' },
-  mention: { color: '#4F46E5', fontWeight: '800' },
+  mention: { color: COLORS.accent, fontWeight: '800' },
   mentionInMine: { color: '#BFDBFE', fontWeight: '800' },
   mentionMe: { backgroundColor: '#FDE68A', color: '#92400E', fontWeight: '800' },
-  mentionBar: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, paddingHorizontal: 10, paddingTop: 8, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB' },
-  mentionChip: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: '#EEF2FF', borderRadius: 16, paddingHorizontal: 11, paddingVertical: 6, borderWidth: 1, borderColor: '#E0E7FF' },
-  mentionChipAt: { color: '#4F46E5', fontWeight: '900', fontSize: 12.5 },
-  mentionChipText: { color: '#1E3A8A', fontWeight: '700', fontSize: 12.5 },
+  mentionBar: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, paddingHorizontal: 10, paddingTop: 8, backgroundColor: COLORS.card, borderTopWidth: 1, borderTopColor: COLORS.line },
+  mentionChip: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: COLORS.indigoSoft, borderRadius: 16, paddingHorizontal: 11, paddingVertical: 6, borderWidth: 1, borderColor: '#E0E7FF' },
+  mentionChipAt: { color: COLORS.accent, fontWeight: '900', fontSize: 12.5 },
+  mentionChipText: { color: COLORS.primary, fontWeight: '700', fontSize: 12.5 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-end', marginTop: 3 },
-  metaText: { fontSize: 9.5, color: '#9CA3AF' },
+  metaText: { fontSize: 9.5, color: COLORS.faint },
 
-  jumpFab: { position: 'absolute', right: 14, bottom: 12, width: 42, height: 42, borderRadius: 21, backgroundColor: INDIGO, justifyContent: 'center', alignItems: 'center', elevation: 4, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } },
+  jumpFab: { position: 'absolute', right: 14, bottom: 12, width: 42, height: 42, borderRadius: 21, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center', ...SHADOW.raised, elevation: 4 },
 
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB' },
-  attachBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
-  mediaImage: { width: 210, height: 210, borderRadius: 12, backgroundColor: '#E5E7EB' },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 10, backgroundColor: COLORS.card, borderTopWidth: 1, borderTopColor: COLORS.line },
+  attachBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: COLORS.indigoSoft, justifyContent: 'center', alignItems: 'center' },
+  mediaImage: { width: 210, height: 210, borderRadius: 12, backgroundColor: COLORS.line },
   mediaVideo: { width: 210, height: 130, borderRadius: 12, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', gap: 4 },
   mediaVideoText: { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '700' },
   previewOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.96)' },
@@ -518,11 +524,11 @@ const styles = StyleSheet.create({
   previewVideoText: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '700' },
   previewFoot: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, padding: 12, paddingBottom: 26 },
   previewCaption: { flex: 1, maxHeight: 100, backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 11, fontSize: 14.5, color: '#fff' },
-  previewSend: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#16A34A', justifyContent: 'center', alignItems: 'center', elevation: 3 },
+  previewSend: { width: 48, height: 48, borderRadius: 24, backgroundColor: COLORS.green, justifyContent: 'center', alignItems: 'center', elevation: 3 },
 
   viewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' },
   viewerClose: { position: 'absolute', top: 48, right: 18, zIndex: 2, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
   viewerImage: { width: '100%', height: '80%' },
-  input: { flex: 1, maxHeight: 110, backgroundColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9, fontSize: 14, color: '#111827' },
-  sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: INDIGO, justifyContent: 'center', alignItems: 'center' },
+  input: { flex: 1, maxHeight: 110, backgroundColor: COLORS.field, borderWidth: 1, borderColor: COLORS.line, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9, fontSize: 14, color: COLORS.ink },
+  sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
 });
