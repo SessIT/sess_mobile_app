@@ -76,7 +76,18 @@ Chat is intended for work communication only. Only the participants of a chat
 Your leave applications, leave balances, approvals/rejections, and attendance
 correction requests.
 
-### h) Celebrations (visible to colleagues)
+### h) Notes
+The **My Notes** screen holds two kinds of entries, both stored on the Company
+server:
+
+- **Your own notes** — text (and optionally a photo you take or select) that
+  you save for yourself. They are private to you: no colleague and no admin can
+  read them. You can edit or delete them at any time.
+- **Notices sent to you by an admin** — one-way messages addressed to you
+  individually. Only you and the admin who wrote the notice can see it, there
+  is no reply channel, and the admin can see whether you have opened it.
+
+### i) Celebrations (visible to colleagues)
 To enable the team celebrations feature (birthday and work-anniversary wishes),
 your **name, birthday (day and month only), work-anniversary date, and
 designation** are shown to your colleagues on the app dashboard when the date
@@ -84,14 +95,14 @@ is coming up. Your birth *year* and age are not displayed.
 
 ## 3. Device permissions, and what we do NOT collect
 
-**Camera** — used only when *you* choose to use it: taking the punch selfie, or
-taking a photo to share in chat. The app never records photos, video, or audio
-in the background.
+**Camera** — used only when *you* choose to use it: taking the punch selfie,
+taking a photo to share in chat, or attaching a photo to your own note. The app
+never records photos, video, or audio in the background.
 
 **Photo gallery** — accessed only through your phone's own picker, and only
-when you tap the share-media button in chat. The app receives **only the
-file(s) you explicitly select**; it cannot browse, scan, or upload anything
-else from your gallery.
+when you tap the share-media button in chat or the photo button on a note. The
+app receives **only the file(s) you explicitly select**; it cannot browse,
+scan, or upload anything else from your gallery.
 
 **Notifications** — used for daily punch-in/punch-out reminders and message
 alerts. Reminders are scheduled **on your own device**; declining notification
@@ -138,6 +149,8 @@ Access is role-based and enforced by the server:
 | Salary, bank, PAN/ESI/EPF details | ✅ (view own) | ✅ HR/Admin only |
 | Your attendance, punch photos, location trail | ✅ | ✅ Admin only |
 | Your chat messages & shared photos/videos | ✅ | Only participants of that chat / group |
+| Your own notes | ✅ | ❌ Nobody else — not even admin |
+| Notices an admin sent you | ✅ | Only the admin who sent it |
 | Your birthday (day/month) & work anniversary | ✅ | ✅ All colleagues (celebrations widget) |
 | Other employees' personal data | ❌ | — |
 

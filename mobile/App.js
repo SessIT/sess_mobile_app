@@ -22,6 +22,7 @@ import LeaveApprovalsScreen from './screens/LeaveApprovalsScreen';
 import ProfileMenuScreen from './screens/ProfileMenuScreen';
 import TaskListScreen from './screens/TaskListScreen';
 import NotesScreen from './screens/NotesScreen';
+import SendNoteScreen from './screens/SendNoteScreen';
 import MoreSettingsScreen from './screens/MoreSettingsScreen';
 import LegalScreen from './screens/LegalScreen';
 
@@ -81,6 +82,7 @@ export default function App() {
         <Stack.Screen name="LeaveApprovals" component={LeaveApprovalsScreen} />
         <Stack.Screen name="TaskList" component={TaskListScreen} />
         <Stack.Screen name="Notes" component={NotesScreen} />
+        <Stack.Screen name="SendNote" component={SendNoteScreen} />
         <Stack.Screen name="MoreSettings" component={MoreSettingsScreen} />
         <Stack.Screen name="Terms" component={LegalScreen} initialParams={{ doc: 'terms' }} />
         <Stack.Screen name="Privacy" component={LegalScreen} initialParams={{ doc: 'privacy' }} />

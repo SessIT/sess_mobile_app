@@ -2,14 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialIcons } from '@expo/vector-icons';
-import { GradientHeader, BottomNav, HeaderIconButton } from '../components/ui';
+import { GradientHeader, BottomNav, HeaderIconButton, SectionLabel } from '../components/ui';
+// import { HolidayWidget, CelebrationsWidget } from '../components/widgets';
 import { COLORS, SHADOW } from '../lib/theme';
 import { api } from '../lib/api';
+import { getAuth } from '../lib/auth';
+
+const ADMIN = 'Technical Director / Admin';
 
 const initials = (n) => (n || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-/* My Profile hub (design page 9) — avatar hero + tile grid into each section. */
-const TILES = [
+/* My Profile hub (design page 9) — avatar hero, the dashboard widgets, and the
+ * tile grid into every section. Admins get an extra management block. */
+const MY_TILES = [
   { key: 'profile', label: 'Profile', icon: 'account-circle', screen: 'ProfileDetail' },
   { key: 'attendance', label: 'My Attendance', icon: 'event-available', screen: 'MyAttendance' },
   { key: 'leave', label: 'My Leave', icon: 'beach-access', screen: 'Leave' },
@@ -18,16 +23,58 @@ const TILES = [
   { key: 'notes', label: 'Notes', icon: 'sticky-note-2', screen: 'Notes' },
 ];
 
+const ADMIN_TILES = [
+  { key: 'users', label: 'User Management', icon: 'group', screen: 'Users' },
+  { key: 'teamatt', label: 'Team Attendance', icon: 'groups', screen: 'TeamAttendance' },
+  { key: 'trail', label: 'Team Trail', icon: 'map', screen: 'TeamTrail' },
+  { key: 'leaveappr', label: 'Leave Approvals', icon: 'fact-check', screen: 'LeaveApprovals' },
+  { key: 'sendnote', label: 'Send Note', icon: 'campaign', screen: 'SendNote' },
+];
+
 export default function ProfileMenuScreen({ navigation }) {
   const [me, setMe] = useState(null);
   const [unread, setUnread] = useState(0);
+  const [noteUnread, setNoteUnread] = useState(0);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     let alive = true;
     api('/me/profile').then(p => { if (alive) setMe(p); }).catch(() => {});
-    api('/chat/unread-count').then(r => { if (alive) setUnread(r.count || 0); }).catch(() => {});
+    // Roles live in the saved login payload — /me/profile does not return them.
+    getAuth().then(a => { if (alive) setIsAdmin((a?.roles || []).includes(ADMIN)); }).catch(() => {});
     return () => { alive = false; };
   }, []);
+
+  // Unread counters — refreshed each time the screen is focused.
+  useEffect(() => {
+    const fetchCounts = () => {
+      api('/chat/unread-count').then(r => setUnread(r.count || 0)).catch(() => {});
+      api('/notes/unread-count').then(r => setNoteUnread(r.count || 0)).catch(() => {});
+    };
+    fetchCounts();
+    return navigation.addListener('focus', fetchCounts);
+  }, [navigation]);
+
+  const Tile = ({ t }) => {
+    const badge = t.key === 'notes' ? noteUnread : 0;
+    return (
+      <TouchableOpacity
+        style={styles.tile}
+        activeOpacity={0.75}
+        onPress={() => navigation.navigate(t.screen)}
+      >
+        <View style={styles.tileIcon}>
+          <MaterialIcons name={t.icon} size={26} color={COLORS.primary} />
+          {badge > 0 && (
+            <View style={styles.tileBadge}>
+              <Text style={styles.tileBadgeText}>{badge > 9 ? '9+' : badge}</Text>
+            </View>
+          )}
+        </View>
+        <Text style={styles.tileLabel}>{t.label}</Text>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -52,25 +99,31 @@ export default function ProfileMenuScreen({ navigation }) {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.heroName} numberOfLines={1}>{me?.fullName || me?.username || '…'}</Text>
-            <Text style={styles.heroSub} numberOfLines={1}>{me?.username ? `@${me.username}` : ''}</Text>
+            <Text style={styles.heroSub} numberOfLines={1}>
+              {me?.designation || (me?.username ? `@${me.username}` : '')}
+            </Text>
           </View>
         </View>
       </GradientHeader>
 
-      <ScrollView contentContainerStyle={styles.grid}>
-        {TILES.map((t) => (
-          <TouchableOpacity
-            key={t.key}
-            style={styles.tile}
-            activeOpacity={0.75}
-            onPress={() => navigation.navigate(t.screen)}
-          >
-            <View style={styles.tileIcon}>
-              <MaterialIcons name={t.icon} size={26} color={COLORS.primary} />
+      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+        {/* Widgets moved here from the dashboard */}
+        {/* <HolidayWidget navigation={navigation} />
+        <CelebrationsWidget navigation={navigation} /> */}
+
+        <SectionLabel text="MY WORKSPACE" />
+        <View style={styles.grid}>
+          {MY_TILES.map(t => <Tile key={t.key} t={t} />)}
+        </View>
+
+        {isAdmin && (
+          <>
+            <SectionLabel text="ADMIN · MANAGEMENT" />
+            <View style={styles.grid}>
+              {ADMIN_TILES.map(t => <Tile key={t.key} t={t} />)}
             </View>
-            <Text style={styles.tileLabel}>{t.label}</Text>
-          </TouchableOpacity>
-        ))}
+          </>
+        )}
       </ScrollView>
 
       <BottomNav navigation={navigation} active="profile" />
@@ -90,10 +143,8 @@ const styles = StyleSheet.create({
   heroName: { color: '#fff', fontSize: 18, fontWeight: '800' },
   heroSub: { color: '#C7D2FE', fontSize: 12.5, marginTop: 2 },
 
-  grid: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: 12,
-    padding: 16, paddingTop: 20, paddingBottom: 24,
-  },
+  body: { padding: 16, paddingTop: 18, paddingBottom: 24 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   tile: {
     width: '31%', flexGrow: 1, backgroundColor: COLORS.card, borderRadius: 16,
     paddingVertical: 18, alignItems: 'center', gap: 10, ...SHADOW.card,
@@ -102,5 +153,11 @@ const styles = StyleSheet.create({
     width: 48, height: 48, borderRadius: 24, backgroundColor: COLORS.indigoSoft,
     justifyContent: 'center', alignItems: 'center',
   },
+  tileBadge: {
+    position: 'absolute', top: -2, right: -2, minWidth: 18, height: 18, borderRadius: 9,
+    backgroundColor: COLORS.red, justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 4, borderWidth: 1.5, borderColor: COLORS.card,
+  },
+  tileBadgeText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
   tileLabel: { fontSize: 12, fontWeight: '700', color: COLORS.ink, textAlign: 'center', paddingHorizontal: 4 },
 });

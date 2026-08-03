@@ -8,29 +8,29 @@ datasource db {
 }
 
 model User {
-  id           Int        @id @default(autoincrement())
-  username     String     @unique
-  passwordHash String     @map("password_hash")
-  fullName     String?    @map("full_name")
-  isActive     Boolean    @default(true) @map("is_active")
-  createdAt    DateTime   @default(now()) @map("created_at")
-  roles        UserRole[]
-  attendance   AttendanceSession[]
-  phone        String?    @unique
-  pinHash      String?    @map("pin_hash") // 4-digit login PIN (bcrypt)
-  locationLogs LocationLog[]
-  leaveRequests  LeaveRequest[] @relation("userLeaves")
-  reviewedLeaves LeaveRequest[] @relation("reviewedLeaves")
+  id             Int                 @id @default(autoincrement())
+  username       String              @unique
+  passwordHash   String              @map("password_hash")
+  fullName       String?             @map("full_name")
+  isActive       Boolean             @default(true) @map("is_active")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  roles          UserRole[]
+  attendance     AttendanceSession[]
+  phone          String?             @unique
+  pinHash        String?             @map("pin_hash") // 4-digit login PIN (bcrypt)
+  locationLogs   LocationLog[]
+  leaveRequests  LeaveRequest[]      @relation("userLeaves")
+  reviewedLeaves LeaveRequest[]      @relation("reviewedLeaves")
 
   // ---- Employment profile (HRMS master data) ----
-  employeeId     String?   @unique @map("employee_id")
-  designation    String?
-  department     String?
-  employmentType String?   @map("employment_type") // Permanent | Temporary | Intern | Contract | Consultant
-  dateOfJoining  DateTime? @map("date_of_joining") @db.Date
-  reportingManagerId Int?  @map("reporting_manager_id")
-  reportingManager   User?  @relation("reports", fields: [reportingManagerId], references: [id])
-  directReports      User[] @relation("reports")
+  employeeId         String?   @unique @map("employee_id")
+  designation        String?
+  department         String?
+  employmentType     String?   @map("employment_type") // Permanent | Temporary | Intern | Contract | Consultant
+  dateOfJoining      DateTime? @map("date_of_joining") @db.Date
+  reportingManagerId Int?      @map("reporting_manager_id")
+  reportingManager   User?     @relation("reports", fields: [reportingManagerId], references: [id])
+  directReports      User[]    @relation("reports")
 
   // ---- Personal ----
   dateOfBirth      DateTime? @map("date_of_birth") @db.Date
@@ -55,10 +55,12 @@ model User {
 
   corrections         AttendanceCorrection[] @relation("userCorrections")
   reviewedCorrections AttendanceCorrection[] @relation("reviewedCorrections")
-  sentMessages     ChatMessage[] @relation("sentMessages")
-  receivedMessages ChatMessage[] @relation("receivedMessages")
-  createdGroups    ChatGroup[]       @relation("createdGroups")
-  groupMemberships ChatGroupMember[] @relation("groupMemberships")
+  sentMessages        ChatMessage[]          @relation("sentMessages")
+  receivedMessages    ChatMessage[]          @relation("receivedMessages")
+  createdGroups       ChatGroup[]            @relation("createdGroups")
+  groupMemberships    ChatGroupMember[]      @relation("groupMemberships")
+  notes               Note[]                 @relation("userNotes")
+  authoredNotes       Note[]                 @relation("authoredNotes")
 
   @@map("users")
 }
@@ -66,18 +68,18 @@ model User {
 // Team chat message — either a 1:1 DM (receiverId) or a group post (groupId).
 // Exactly one of receiverId/groupId is set (enforced in the route layer).
 model ChatMessage {
-  id         Int       @id @default(autoincrement())
-  senderId   Int       @map("sender_id")
-  receiverId Int?      @map("receiver_id")
-  groupId    Int?      @map("group_id")
-  body       String
+  id             Int        @id @default(autoincrement())
+  senderId       Int        @map("sender_id")
+  receiverId     Int?       @map("receiver_id")
+  groupId        Int?       @map("group_id")
+  body           String
   attachment     String? // uploads/chat/<file> — photo or video shared from gallery
-  attachmentType String? @map("attachment_type") // image | video
-  readAt     DateTime? @map("read_at") // DM read receipt; groups use lastReadId
-  createdAt  DateTime  @default(now()) @map("created_at")
-  sender     User       @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
-  receiver   User?      @relation("receivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
-  group      ChatGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  attachmentType String?    @map("attachment_type") // image | video
+  readAt         DateTime?  @map("read_at") // DM read receipt; groups use lastReadId
+  createdAt      DateTime   @default(now()) @map("created_at")
+  sender         User       @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver       User?      @relation("receivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  group          ChatGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@index([receiverId, readAt])
   @@index([senderId, receiverId, id])
@@ -86,11 +88,11 @@ model ChatMessage {
 }
 
 model ChatGroup {
-  id          Int      @id @default(autoincrement())
+  id          Int               @id @default(autoincrement())
   name        String
-  createdById Int      @map("created_by_id")
-  createdAt   DateTime @default(now()) @map("created_at")
-  createdBy   User     @relation("createdGroups", fields: [createdById], references: [id])
+  createdById Int               @map("created_by_id")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  createdBy   User              @relation("createdGroups", fields: [createdById], references: [id])
   members     ChatGroupMember[]
   messages    ChatMessage[]
 
@@ -99,10 +101,10 @@ model ChatGroup {
 
 // Membership + per-member read cursor (unread = messages with id > lastReadId).
 model ChatGroupMember {
-  groupId    Int      @map("group_id")
-  userId     Int      @map("user_id")
-  lastReadId Int      @default(0) @map("last_read_id")
-  joinedAt   DateTime @default(now()) @map("joined_at")
+  groupId    Int       @map("group_id")
+  userId     Int       @map("user_id")
+  lastReadId Int       @default(0) @map("last_read_id")
+  joinedAt   DateTime  @default(now()) @map("joined_at")
   group      ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user       User      @relation("groupMemberships", fields: [userId], references: [id], onDelete: Cascade)
 
@@ -149,24 +151,24 @@ model UserRole {
 }
 
 model AttendanceSession {
-  id           Int       @id @default(autoincrement())
-  userId       Int       @map("user_id")
-  punchInTime  DateTime  @map("punch_in_time")
-  punchOutTime DateTime? @map("punch_out_time")
-  punchInLat   Float?    @map("punch_in_lat")
-  punchInLng   Float?    @map("punch_in_lng")
-  punchInAcc   Float?    @map("punch_in_acc")
-  punchOutLat  Float?    @map("punch_out_lat")
-  punchOutLng  Float?    @map("punch_out_lng")
-  punchOutAcc  Float?    @map("punch_out_acc")
-  workingHours Float?    @map("working_hours")
-  isLate       Boolean   @default(false) @map("is_late")
-  user         User      @relation(fields: [userId], references: [id])
-  punchInPhoto  String? @map("punch_in_photo")
-  punchOutPhoto String? @map("punch_out_photo")
-  punchInAddress  String? @map("punch_in_address")
-  punchOutAddress String? @map("punch_out_address")
-  siteName String? @map("site_name") @default("SESS")
+  id              Int       @id @default(autoincrement())
+  userId          Int       @map("user_id")
+  punchInTime     DateTime  @map("punch_in_time")
+  punchOutTime    DateTime? @map("punch_out_time")
+  punchInLat      Float?    @map("punch_in_lat")
+  punchInLng      Float?    @map("punch_in_lng")
+  punchInAcc      Float?    @map("punch_in_acc")
+  punchOutLat     Float?    @map("punch_out_lat")
+  punchOutLng     Float?    @map("punch_out_lng")
+  punchOutAcc     Float?    @map("punch_out_acc")
+  workingHours    Float?    @map("working_hours")
+  isLate          Boolean   @default(false) @map("is_late")
+  user            User      @relation(fields: [userId], references: [id])
+  punchInPhoto    String?   @map("punch_in_photo")
+  punchOutPhoto   String?   @map("punch_out_photo")
+  punchInAddress  String?   @map("punch_in_address")
+  punchOutAddress String?   @map("punch_out_address")
+  siteName        String?   @default("SESS") @map("site_name")
 
   @@index([userId, punchInTime])
   @@map("attendance_session")
@@ -263,4 +265,26 @@ model LocationLog {
 
   @@index([userId, capturedAt])
   @@map("location_log")
+}
+
+// Notes — one row per note belonging to exactly ONE employee (userId).
+//  kind = "self"  : the employee's own private note (they can edit/delete it)
+//  kind = "admin" : a one-way notice an admin sent to that employee. Read-only
+//                   for the employee — there is no reply path anywhere.
+// Nobody but the owner (and the admin who wrote an "admin" note) can read it.
+model Note {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id") // owner / recipient
+  authorId  Int?      @map("author_id") // writer: self, or the sending admin
+  kind      String    @default("self") // self | admin
+  body      String
+  photo     String? // uploads/notes/<file> — optional photo on a self note
+  readAt    DateTime? @map("read_at") // admin notices only — powers the badge
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation("userNotes", fields: [userId], references: [id], onDelete: Cascade)
+  author    User?     @relation("authoredNotes", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([userId, id])
+  @@index([authorId, id])
+  @@map("notes")
 }

@@ -24,6 +24,7 @@ app.use('/api/sites', require('./routes/sites'));
 app.use('/api/geo', require('./routes/geo'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/chat', require('./routes/chat'));
+app.use('/api/notes', require('./routes/notes'));
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', () => console.log('API running on http://localhost:' + PORT));
