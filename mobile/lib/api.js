@@ -24,7 +24,7 @@ export async function apiUpload(path, formData) {
     headers: {
       ...(auth?.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
     },
-    body: formData, // Content-Type auto (multipart boundary)
+    body: formData,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || `Request failed (${res.status})`);
