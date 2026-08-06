@@ -35,7 +35,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const auth = await Promise.race([getAuth(), new Promise(r => setTimeout(() => r(null), 3000))]);
+        const auth = await getAuth();
         if (auth && new Date(auth.expiresAt) > new Date()) {
           setSavedAuth(auth); // token valid — skip login
         }
