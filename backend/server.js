@@ -3,6 +3,9 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
+// In production the app sits behind Caddy (reverse proxy). Trust the first hop
+// so req.ip is the real client IP — required for per-IP rate limiting to work.
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -20,6 +23,8 @@ app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/location', require('./routes/location'));
 app.use('/api/holidays', require('./routes/holidays'));
 app.use('/api/leaves', require('./routes/leaves'));
+app.use('/api/ot', require('./routes/ot'));
+app.use('/api/compoff', require('./routes/compoff'));
 app.use('/api/sites', require('./routes/sites'));
 app.use('/api/geo', require('./routes/geo'));
 app.use('/api/reports', require('./routes/reports'));

@@ -18,6 +18,8 @@ const MY_TILES = [
   { key: 'profile', label: 'Profile', icon: 'account-circle', screen: 'ProfileDetail' },
   { key: 'attendance', label: 'My Attendance', icon: 'event-available', screen: 'MyAttendance' },
   { key: 'leave', label: 'My Leave', icon: 'beach-access', screen: 'Leave' },
+  { key: 'overtime', label: 'My Overtime', icon: 'more-time', screen: 'Overtime' },
+  { key: 'compoff', label: 'Comp-Off', icon: 'redeem', screen: 'CompOff' },
   { key: 'holidays', label: 'Holiday List', icon: 'celebration', screen: 'Holidays' },
   { key: 'tasks', label: 'My Tasks', icon: 'checklist', screen: 'TaskList' },
   { key: 'notes', label: 'Notes', icon: 'sticky-note-2', screen: 'Notes' },
@@ -28,6 +30,8 @@ const ADMIN_TILES = [
   { key: 'teamatt', label: 'Team Attendance', icon: 'groups', screen: 'TeamAttendance' },
   { key: 'trail', label: 'Team Trail', icon: 'map', screen: 'TeamTrail' },
   { key: 'leaveappr', label: 'Leave Approvals', icon: 'fact-check', screen: 'LeaveApprovals' },
+  { key: 'otappr', label: 'OT Approvals', icon: 'more-time', screen: 'OtApprovals' },
+  { key: 'coappr', label: 'Comp-Off Approvals', icon: 'redeem', screen: 'CompOffApprovals' },
   { key: 'sendnote', label: 'Send Note', icon: 'campaign', screen: 'SendNote' },
 ];
 

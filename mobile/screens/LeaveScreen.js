@@ -21,6 +21,7 @@ const TYPE_STYLE = {
   CL: { c: COLORS.accent, soft: COLORS.indigoSoft },
   SL: { c: COLORS.orange, soft: COLORS.orangeSoft },
   PL: { c: COLORS.green, soft: COLORS.greenSoft },
+  CO: { c: '#7C3AED', soft: '#F3E8FF' }, // comp-off — earned by working week-offs/holidays
 };
 const typeStyle = (code) => TYPE_STYLE[code] || { c: COLORS.primary, soft: COLORS.indigoSoft };
 

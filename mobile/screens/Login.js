@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Image,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
@@ -11,31 +11,34 @@ import { api } from '../lib/api';
 
 const INDIGO = '#1E3A8A';
 const EMPTY_PIN = ['', '', '', ''];
+const EMPTY_OTP = ['', '', '', '', '', ''];
 
-/* Masked 4-digit PIN input row (auto-advance, backspace to previous). */
-function PinRow({ value, setValue, autoFocus = false, onFilled }) {
+/* Digit-code input row (auto-advance, backspace to previous). Used for the
+ * masked 4-digit PIN and the visible 6-digit WhatsApp OTP (compact boxes). */
+function PinRow({ value, setValue, autoFocus = false, onFilled, secure = true, compact = false }) {
   const refs = useRef([]);
+  const len = value.length;
   const onChange = (v, i) => {
     const d = v.replace(/\D/g, '').slice(-1);
     const next = [...value];
     next[i] = d;
     setValue(next);
-    if (d && i < 3) refs.current[i + 1]?.focus();
-    if (d && i === 3 && onFilled) onFilled(next.join(''));
+    if (d && i < len - 1) refs.current[i + 1]?.focus();
+    if (d && i === len - 1 && next.every(Boolean) && onFilled) onFilled(next.join(''));
   };
   const onKey = (e, i) => {
     if (e.nativeEvent.key === 'Backspace' && !value[i] && i > 0) refs.current[i - 1]?.focus();
   };
   return (
-    <View style={styles.pinRow}>
+    <View style={[styles.pinRow, compact && styles.pinRowCompact]}>
       {value.map((d, i) => (
         <TextInput
           key={i}
           ref={(r) => (refs.current[i] = r)}
-          style={[styles.pinBox, d ? styles.pinBoxFilled : null]}
+          style={[styles.pinBox, compact && styles.pinBoxCompact, d ? styles.pinBoxFilled : null]}
           keyboardType="number-pad"
           maxLength={1}
-          secureTextEntry
+          secureTextEntry={secure}
           autoFocus={autoFocus && i === 0}
           value={d}
           onChangeText={(v) => onChange(v, i)}
@@ -47,17 +50,27 @@ function PinRow({ value, setValue, autoFocus = false, onFilled }) {
 }
 
 export default function LoginScreen({ navigation }) {
-  const [mode, setMode] = useState('phone'); // 'phone' | 'pin' | 'setpin' | 'admin'
+  const [mode, setMode] = useState('phone'); // 'phone' | 'pin' | 'otp' | 'setpin' | 'admin'
   const [phone, setPhone] = useState('');
   const [greetName, setGreetName] = useState('');
   const [isReset, setIsReset] = useState(false); // setpin: first-time vs forgot-PIN
   const [pin, setPin] = useState(EMPTY_PIN);
   const [pin2, setPin2] = useState(EMPTY_PIN);
+  const [otp, setOtp] = useState(EMPTY_OTP);
+  const [resetToken, setResetToken] = useState(null); // from /verify-otp, needed by /set-pin
+  const [resendIn, setResendIn] = useState(0); // resend cooldown countdown (s)
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  // Tick the "Resend in Ns" countdown while it's above zero.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   const finishLogin = async (data) => {
     await saveAuth(data);
@@ -80,11 +93,60 @@ export default function LoginScreen({ navigation }) {
       if (data.hasPin) {
         setMode('pin');
       } else {
-        setIsReset(false);
-        setMode('setpin'); // first login — user creates their own PIN
+        await requestOtp(false); // first login — verify WhatsApp, then create PIN
       }
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
+  };
+
+  // Send a 6-digit code to the number's WhatsApp (first-time setup / forgot PIN).
+  const requestOtp = async (reset) => {
+    setError(null);
+    setBusy(true);
+    try {
+      const data = await api('/auth/request-otp', {
+        method: 'POST', body: JSON.stringify({ phone: phone.replace(/\D/g, '') }),
+      });
+      setIsReset(reset);
+      setOtp(EMPTY_OTP);
+      setResetToken(null);
+      setResendIn(data.resendIn || 60);
+      setMode('otp');
+    } catch (e) {
+      // Cooldown hit — a code went out moments ago and is still valid, so let
+      // the user type it instead of stranding them on an error.
+      const wait = String(e.message).match(/wait (\d+)s/);
+      if (wait) {
+        setIsReset(reset);
+        setOtp(EMPTY_OTP);
+        setResetToken(null);
+        setResendIn(Number(wait[1]));
+        setMode('otp');
+      } else {
+        setError(e.message);
+      }
+    } finally { setBusy(false); }
+  };
+
+  // Check the code (auto-fires on the 6th digit) -> reset token -> PIN screen.
+  const verifyOtp = async (code) => {
+    setError(null);
+    const c = code || otp.join('');
+    if (c.length !== 6) { setError('Enter the 6-digit code'); return; }
+    setBusy(true);
+    try {
+      const data = await api('/auth/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), otp: c }),
+      });
+      setResetToken(data.resetToken);
+      setPin(EMPTY_PIN);
+      setPin2(EMPTY_PIN);
+      setMode('setpin');
+    } catch (e) {
+      setError(e.message);
+      setOtp(EMPTY_OTP);
+    } finally { setBusy(false); }
   };
 
   // Step 2a — login with the existing PIN (auto-fires on the 4th digit).
@@ -106,6 +168,7 @@ export default function LoginScreen({ navigation }) {
   };
 
   // Step 2b — create / reset the PIN (enter + confirm), then logged in.
+  // Carries the resetToken so the server knows this phone passed WhatsApp OTP.
   const savePin = async () => {
     setError(null);
     const p1 = pin.join(''), p2 = pin2.join('');
@@ -115,11 +178,18 @@ export default function LoginScreen({ navigation }) {
     try {
       const data = await api('/auth/set-pin', {
         method: 'POST',
-        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), pin: p1 }),
+        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), pin: p1, resetToken }),
       });
       await finishLogin(data);
-    } catch (e) { setError(e.message); }
-    finally { setBusy(false); }
+    } catch (e) {
+      // Reset token expired (took >10 min) — go back to the OTP step to re-verify.
+      if (String(e.message).includes('Verification expired')) {
+        setOtp(EMPTY_OTP);
+        setResendIn(0);
+        setMode('otp');
+      }
+      setError(e.message);
+    } finally { setBusy(false); }
   };
 
   const adminLogin = async () => {
@@ -138,11 +208,9 @@ export default function LoginScreen({ navigation }) {
 
   const switchMode = (m) => { setError(null); setMode(m); };
   const startForgotPin = () => {
-    setError(null);
-    setIsReset(true);
     setPin(EMPTY_PIN);
     setPin2(EMPTY_PIN);
-    setMode('setpin');
+    requestOtp(true); // WhatsApp verification required before a new PIN
   };
 
   return (
@@ -232,6 +300,41 @@ export default function LoginScreen({ navigation }) {
                   </TouchableOpacity>
                   <TouchableOpacity onPress={startForgotPin}>
                     <Text style={styles.linkText}>Forgot PIN?</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {mode === 'otp' && (
+              <>
+                <Text style={styles.cardTitle}>Verify your number 📲</Text>
+                <Text style={styles.cardSub}>
+                  Enter the 6-digit code sent on WhatsApp to +91 {phone}
+                </Text>
+
+                <PinRow value={otp} setValue={setOtp} autoFocus secure={false} compact
+                  onFilled={(c) => verifyOtp(c)} />
+
+                {error && <Text style={[styles.error, { alignSelf: 'center' }]}>{error}</Text>}
+
+                <TouchableOpacity style={[styles.primaryBtn, busy && { opacity: 0.7 }]}
+                  onPress={() => verifyOtp()} disabled={busy} activeOpacity={0.85}>
+                  {busy ? <ActivityIndicator color="#fff" /> : (
+                    <>
+                      <MaterialIcons name="verified-user" size={18} color="#fff" />
+                      <Text style={styles.primaryText}>Verify</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.pinFooter}>
+                  <TouchableOpacity onPress={() => switchMode('phone')}>
+                    <Text style={styles.linkText}>Change number</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity disabled={resendIn > 0 || busy} onPress={() => requestOtp(isReset)}>
+                    <Text style={[styles.linkText, (resendIn > 0 || busy) && { color: '#9CA3AF' }]}>
+                      {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -360,10 +463,12 @@ const styles = StyleSheet.create({
   },
 
   pinRow: { flexDirection: 'row', justifyContent: 'center', gap: 14, marginBottom: 6 },
+  pinRowCompact: { gap: 8 },
   pinBox: {
     width: 56, height: 60, borderRadius: 14, borderWidth: 1.5, borderColor: '#E5E7EB',
     backgroundColor: '#F9FAFB', textAlign: 'center', fontSize: 24, fontWeight: '800', color: '#111827',
   },
+  pinBoxCompact: { width: 44, height: 52, borderRadius: 12, fontSize: 20 },
   pinBoxFilled: { borderColor: INDIGO, backgroundColor: '#EEF2FF' },
   pinLabel: { fontSize: 10.5, fontWeight: '800', color: '#9CA3AF', letterSpacing: 0.7, marginTop: 10, marginBottom: 8, alignSelf: 'center' },
   matchHint: { alignSelf: 'center', fontSize: 12.5, fontWeight: '800', marginTop: 6 },

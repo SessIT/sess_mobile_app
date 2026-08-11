@@ -323,6 +323,22 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       dayMeta.push({ ymd, weekday: wd, isWeekoff, isFuture });
     }
 
+    // Approved OT hours in the month, per user (shown as the OT column).
+    const otRows = await prisma.otRequest.groupBy({
+      by: ['userId'],
+      where: {
+        status: 'approved',
+        // OT dates are stored date-only (UTC midnight), so bound by calendar month.
+        date: {
+          gte: new Date(`${month}-01T00:00:00.000Z`),
+          lt: new Date(`${m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`}-01T00:00:00.000Z`),
+        },
+        ...(userId ? { userId } : {}),
+      },
+      _sum: { hours: true },
+    });
+    const otByUser = new Map(otRows.map(r => [r.userId, Math.round((r._sum.hours || 0) * 100) / 100]));
+
     if (!userId) {
       const users = await prisma.user.findMany({ where: { isActive: true }, select: { id: true, username: true, fullName: true } });
       const leaveSets = await approvedLeaveSets(month, users.map(u => u.id));
@@ -355,6 +371,7 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
           absent: Math.max(workingDaysSoFar - r.days.size - leave, 0),
           late: r.late,
           hours: Math.round(r.hours * 100) / 100,
+          otHours: otByUser.get(r.userId) || 0, // approved overtime this month
           requiredHours: required, // hours expected to be physically worked (leave excluded)
         };
       }).sort((a, b) => (a.fullName || a.username).localeCompare(b.fullName || b.username));
@@ -402,6 +419,7 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       absent: days.filter(d => d.status === 'absent').length,
       late: days.filter(d => d.late).length,
       hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
+      otHours: otByUser.get(userId) || 0,
     };
     res.json({
       month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,

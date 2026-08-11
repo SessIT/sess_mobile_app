@@ -61,8 +61,63 @@ model User {
   groupMemberships    ChatGroupMember[]      @relation("groupMemberships")
   notes               Note[]                 @relation("userNotes")
   authoredNotes       Note[]                 @relation("authoredNotes")
+  otRequests          OtRequest[]            @relation("userOt")
+  reviewedOt          OtRequest[]            @relation("reviewedOt")
+  compOffRequests     CompOffRequest[]       @relation("userCompOff")
+  reviewedCompOff     CompOffRequest[]       @relation("reviewedCompOff")
 
   @@map("users")
+}
+
+// Compensation leave (comp-off) — an employee who worked on a week-off (Sunday)
+// or a company holiday can request a comp-off CREDIT for that day. Once an
+// admin approves it, the credit becomes 1 day of "CO" leave balance, spent
+// later through the normal leave-request flow (leave type code "CO").
+// The admin review screen shows the punch record of the worked day: a full day
+// is 9:30 → 18:30 IST — missing or short punches are flagged so the admin can
+// reject, or revoke an already-approved credit (status = "revoked").
+model CompOffRequest {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  workDate     DateTime  @map("work_date") @db.Date // the week-off/holiday actually worked
+  reason       String? // what work was done that day
+  status       String    @default("pending") // pending | approved | rejected | cancelled | revoked
+  reviewNote   String?   @map("review_note")
+  reviewedById Int?      @map("reviewed_by_id")
+  reviewedAt   DateTime? @map("reviewed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  user         User      @relation("userCompOff", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy   User?     @relation("reviewedCompOff", fields: [reviewedById], references: [id])
+
+  @@index([userId, workDate])
+  @@index([status, workDate])
+  @@map("comp_off_requests")
+}
+
+// Overtime — an employee requests OT BEFORE doing it (with the planned work as
+// the reason). It lands on their OT calendar only once an admin approves it.
+// Admins can also add OT directly (source = "admin"): those rows are created
+// pre-approved, individually or for a group of employees at once.
+model OtRequest {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  date         DateTime  @db.Date
+  startTime    DateTime  @map("start_time")
+  endTime      DateTime  @map("end_time")
+  hours        Float
+  reason       String // the work planned/done during the OT
+  status       String    @default("pending") // pending | approved | rejected | cancelled
+  source       String    @default("employee") // employee | admin
+  reviewNote   String?   @map("review_note")
+  reviewedById Int?      @map("reviewed_by_id")
+  reviewedAt   DateTime? @map("reviewed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  user         User      @relation("userOt", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy   User?     @relation("reviewedOt", fields: [reviewedById], references: [id])
+
+  @@index([userId, date])
+  @@index([status, date])
+  @@map("ot_requests")
 }
 
 // Team chat message — either a 1:1 DM (receiverId) or a group post (groupId).

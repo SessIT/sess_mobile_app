@@ -8,6 +8,10 @@ function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
+    // Special-purpose tokens (refresh, pin-reset) share the signing secret but
+    // are NOT access tokens — carrying a `type` marks them as such.
+    if (payload.type || !payload.sub)
+      return res.status(401).json({ message: 'Invalid or expired token' });
     req.user = payload; // { sub, username, roles }
     next();
   } catch (e) {
