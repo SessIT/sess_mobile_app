@@ -37,6 +37,7 @@ model User {
   bloodGroup       String?   @map("blood_group")
   address          String?
   emergencyContact String?   @map("emergency_contact")
+  email            String?   @unique // used for email OTP fallback (login codes)
 
   // ---- Statutory & bank (admin-only visibility) ----
   esiNumber   String? @map("esi_number")

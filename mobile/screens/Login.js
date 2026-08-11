@@ -14,7 +14,7 @@ const EMPTY_PIN = ['', '', '', ''];
 const EMPTY_OTP = ['', '', '', '', '', ''];
 
 /* Digit-code input row (auto-advance, backspace to previous). Used for the
- * masked 4-digit PIN and the visible 6-digit WhatsApp OTP (compact boxes). */
+ * masked 4-digit PIN and the visible 6-digit email OTP (compact boxes). */
 function PinRow({ value, setValue, autoFocus = false, onFilled, secure = true, compact = false }) {
   const refs = useRef([]);
   const len = value.length;
@@ -50,8 +50,8 @@ function PinRow({ value, setValue, autoFocus = false, onFilled, secure = true, c
 }
 
 export default function LoginScreen({ navigation }) {
-  const [mode, setMode] = useState('phone'); // 'phone' | 'pin' | 'otp' | 'setpin' | 'admin'
-  const [phone, setPhone] = useState('');
+  const [mode, setMode] = useState('phone'); // 'phone' (email entry) | 'pin' | 'otp' | 'setpin' | 'admin'
+  const [phone, setPhone] = useState(''); // the login email address (state name kept from the phone-login days)
   const [greetName, setGreetName] = useState('');
   const [isReset, setIsReset] = useState(false); // setpin: first-time vs forgot-PIN
   const [pin, setPin] = useState(EMPTY_PIN);
@@ -59,6 +59,7 @@ export default function LoginScreen({ navigation }) {
   const [otp, setOtp] = useState(EMPTY_OTP);
   const [resetToken, setResetToken] = useState(null); // from /verify-otp, needed by /set-pin
   const [resendIn, setResendIn] = useState(0); // resend cooldown countdown (s)
+  const [emailHint, setEmailHint] = useState(null); // masked email from /check-phone
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -72,40 +73,45 @@ export default function LoginScreen({ navigation }) {
     return () => clearTimeout(t);
   }, [resendIn]);
 
+  // Normalised email sent to the server, and how we show it back.
+  const identValue = () => phone.trim().toLowerCase();
+  const identDisplay = phone.trim();
+
   const finishLogin = async (data) => {
     await saveAuth(data);
     navigation.replace('Dashboard', { fullName: data.fullName, roles: data.roles });
   };
 
-  // Step 1 — verify the mobile number is registered, branch on PIN existence.
+  // Step 1 — verify the email is registered, branch on PIN existence.
   const checkPhone = async () => {
     setError(null);
-    const p = phone.replace(/\D/g, '');
-    if (p.length !== 10) { setError('Enter a valid 10-digit mobile number'); return; }
+    const v = identValue();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { setError('Enter a valid email address'); return; }
     setBusy(true);
     try {
       const data = await api('/auth/check-phone', {
-        method: 'POST', body: JSON.stringify({ phone: p }),
+        method: 'POST', body: JSON.stringify({ identifier: v }),
       });
       setGreetName(data.name || '');
+      setEmailHint(data.emailHint || null);
       setPin(EMPTY_PIN);
       setPin2(EMPTY_PIN);
       if (data.hasPin) {
         setMode('pin');
       } else {
-        await requestOtp(false); // first login — verify WhatsApp, then create PIN
+        await requestOtp(false); // first login — verify email, then create PIN
       }
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
 
-  // Send a 6-digit code to the number's WhatsApp (first-time setup / forgot PIN).
+  // Email a 6-digit code (first-time setup / forgot PIN).
   const requestOtp = async (reset) => {
     setError(null);
     setBusy(true);
     try {
       const data = await api('/auth/request-otp', {
-        method: 'POST', body: JSON.stringify({ phone: phone.replace(/\D/g, '') }),
+        method: 'POST', body: JSON.stringify({ identifier: identValue() }),
       });
       setIsReset(reset);
       setOtp(EMPTY_OTP);
@@ -137,7 +143,7 @@ export default function LoginScreen({ navigation }) {
     try {
       const data = await api('/auth/verify-otp', {
         method: 'POST',
-        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), otp: c }),
+        body: JSON.stringify({ identifier: identValue(), otp: c }),
       });
       setResetToken(data.resetToken);
       setPin(EMPTY_PIN);
@@ -158,7 +164,7 @@ export default function LoginScreen({ navigation }) {
     try {
       const data = await api('/auth/verify-pin', {
         method: 'POST',
-        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), pin: pinCode }),
+        body: JSON.stringify({ identifier: identValue(), pin: pinCode }),
       });
       await finishLogin(data);
     } catch (e) {
@@ -168,7 +174,7 @@ export default function LoginScreen({ navigation }) {
   };
 
   // Step 2b — create / reset the PIN (enter + confirm), then logged in.
-  // Carries the resetToken so the server knows this phone passed WhatsApp OTP.
+  // Carries the resetToken so the server knows this email passed OTP verification.
   const savePin = async () => {
     setError(null);
     const p1 = pin.join(''), p2 = pin2.join('');
@@ -178,7 +184,7 @@ export default function LoginScreen({ navigation }) {
     try {
       const data = await api('/auth/set-pin', {
         method: 'POST',
-        body: JSON.stringify({ phone: phone.replace(/\D/g, ''), pin: p1, resetToken }),
+        body: JSON.stringify({ identifier: identValue(), pin: p1, resetToken }),
       });
       await finishLogin(data);
     } catch (e) {
@@ -210,7 +216,7 @@ export default function LoginScreen({ navigation }) {
   const startForgotPin = () => {
     setPin(EMPTY_PIN);
     setPin2(EMPTY_PIN);
-    requestOtp(true); // WhatsApp verification required before a new PIN
+    requestOtp(true); // email verification required before a new PIN
   };
 
   return (
@@ -241,18 +247,19 @@ export default function LoginScreen({ navigation }) {
             {mode === 'phone' && (
               <>
                 <Text style={styles.cardTitle}>Welcome 👋</Text>
-                <Text style={styles.cardSub}>Enter your registered mobile number</Text>
+                <Text style={styles.cardSub}>Enter your registered email address</Text>
 
                 <View style={styles.phoneRow}>
-                  <View style={styles.ccChip}><Text style={styles.ccText}>+91</Text></View>
                   <TextInput
                     style={styles.phoneInput}
-                    placeholder="10-digit mobile number"
+                    placeholder="name@example.com"
                     placeholderTextColor="#9CA3AF"
-                    keyboardType="number-pad"
-                    maxLength={10}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={120}
                     value={phone}
-                    onChangeText={(t) => setPhone(t.replace(/\D/g, ''))}
+                    onChangeText={setPhone}
                   />
                 </View>
 
@@ -278,7 +285,7 @@ export default function LoginScreen({ navigation }) {
             {mode === 'pin' && (
               <>
                 <Text style={styles.cardTitle}>Hi {greetName || 'there'} 👋</Text>
-                <Text style={styles.cardSub}>Enter your 4-digit PIN for +91 {phone}</Text>
+                <Text style={styles.cardSub}>Enter your 4-digit PIN for {identDisplay}</Text>
 
                 <PinRow value={pin} setValue={setPin} autoFocus onFilled={(code) => verifyPin(code)} />
 
@@ -296,7 +303,7 @@ export default function LoginScreen({ navigation }) {
 
                 <View style={styles.pinFooter}>
                   <TouchableOpacity onPress={() => switchMode('phone')}>
-                    <Text style={styles.linkText}>Change number</Text>
+                    <Text style={styles.linkText}>Change email</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={startForgotPin}>
                     <Text style={styles.linkText}>Forgot PIN?</Text>
@@ -307,9 +314,9 @@ export default function LoginScreen({ navigation }) {
 
             {mode === 'otp' && (
               <>
-                <Text style={styles.cardTitle}>Verify your number 📲</Text>
+                <Text style={styles.cardTitle}>Verify your email 📧</Text>
                 <Text style={styles.cardSub}>
-                  Enter the 6-digit code sent on WhatsApp to +91 {phone}
+                  Enter the 6-digit code emailed to {emailHint || identDisplay}
                 </Text>
 
                 <PinRow value={otp} setValue={setOtp} autoFocus secure={false} compact
@@ -329,7 +336,7 @@ export default function LoginScreen({ navigation }) {
 
                 <View style={styles.pinFooter}>
                   <TouchableOpacity onPress={() => switchMode('phone')}>
-                    <Text style={styles.linkText}>Change number</Text>
+                    <Text style={styles.linkText}>Change email</Text>
                   </TouchableOpacity>
                   <TouchableOpacity disabled={resendIn > 0 || busy} onPress={() => requestOtp(isReset)}>
                     <Text style={[styles.linkText, (resendIn > 0 || busy) && { color: '#9CA3AF' }]}>
@@ -345,7 +352,7 @@ export default function LoginScreen({ navigation }) {
                 <Text style={styles.cardTitle}>{isReset ? 'Reset PIN 🔁' : `Hi ${greetName || 'there'} — create your PIN 🔐`}</Text>
                 <Text style={styles.cardSub}>
                   {isReset
-                    ? `Set a new 4-digit PIN for +91 ${phone}`
+                    ? `Set a new 4-digit PIN for ${identDisplay}`
                     : 'Set a 4-digit PIN — you will use it to login from now on'}
                 </Text>
 
@@ -373,7 +380,7 @@ export default function LoginScreen({ navigation }) {
                 </TouchableOpacity>
 
                 <TouchableOpacity onPress={() => switchMode('phone')} style={styles.linkBtn}>
-                  <Text style={styles.linkText}>Change number</Text>
+                  <Text style={styles.linkText}>Change email</Text>
                 </TouchableOpacity>
               </>
             )}

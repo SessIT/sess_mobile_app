@@ -63,7 +63,7 @@ const USER_SELECT = {
   employeeId: true, designation: true, department: true, employmentType: true,
   dateOfJoining: true, reportingManagerId: true,
   reportingManager: { select: { id: true, fullName: true, username: true } },
-  dateOfBirth: true, bloodGroup: true, address: true, emergencyContact: true,
+  dateOfBirth: true, bloodGroup: true, address: true, emergencyContact: true, email: true,
   esiNumber: true, epfNumber: true, panNumber: true, salaryCtc: true,
   bankName: true, bankAccount: true, bankIfsc: true,
   exitDate: true, exitReason: true, noticeServed: true, exitFormalitiesDone: true,
@@ -117,6 +117,16 @@ async function buildProfileData(body, id) {
     const v = strOrNull(body.emergencyContact, 15);
     if (v && String(v).replace(/\D/g, '').length !== 10) return fail('Emergency contact must be a 10-digit number');
     data.emergencyContact = v ? String(v).replace(/\D/g, '') : null;
+  }
+  if (body.email !== undefined) {
+    const v = strOrNull(body.email, 120);
+    if (v) {
+      const email = v.toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Enter a valid email address');
+      const taken = await prisma.user.findFirst({ where: { email, ...(id ? { id: { not: id } } : {}) } });
+      if (taken) return fail('Email already in use');
+      data.email = email;
+    } else data.email = null;
   }
   if (body.esiNumber !== undefined) data.esiNumber = strOrNull(body.esiNumber, 25);
   if (body.epfNumber !== undefined) data.epfNumber = strOrNull(body.epfNumber, 30);

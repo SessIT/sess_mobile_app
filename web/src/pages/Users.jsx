@@ -261,7 +261,7 @@ const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const EMPTY_PROFILE = {
   employeeId: '', designation: '', department: '', employmentType: '',
   dateOfJoining: '', reportingManagerId: '',
-  dateOfBirth: '', bloodGroup: '', address: '', emergencyContact: '',
+  dateOfBirth: '', bloodGroup: '', address: '', emergencyContact: '', email: '',
   esiNumber: '', epfNumber: '', panNumber: '', salaryCtc: '',
   bankName: '', bankAccount: '', bankIfsc: '',
 };
@@ -278,6 +278,7 @@ const profileFromUser = (u) => ({
   bloodGroup: u.bloodGroup || '',
   address: u.address || '',
   emergencyContact: u.emergencyContact || '',
+  email: u.email || '',
   esiNumber: u.esiNumber || '',
   epfNumber: u.epfNumber || '',
   panNumber: u.panNumber || '',
@@ -343,6 +344,14 @@ function ProfileFields({ form, set, managers, selfId }) {
           onChange={(e) => set('emergencyContact', e.target.value.replace(/\D/g, '').slice(0, 10))}
           placeholder="9876543210"
           inputMode="numeric"
+        />
+      </Field>
+      <Field label="Email" hint="Used for login-code fallback when WhatsApp fails.">
+        <Input
+          type="email"
+          value={form.email}
+          onChange={(e) => set('email', e.target.value.trim())}
+          placeholder="name@example.com"
         />
       </Field>
       <div className="sm:col-span-1">
