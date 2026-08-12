@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
   View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList,
   ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
@@ -24,6 +25,7 @@ const when = (iso) => {
 };
 
 export default function SendNoteScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState('compose');   // compose | sent
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -166,7 +168,7 @@ export default function SendNoteScreen({ navigation }) {
       {tab === 'compose' ? (
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={'padding'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           <View style={styles.searchWrap}>
@@ -198,7 +200,7 @@ export default function SendNoteScreen({ navigation }) {
             />
           )}
 
-          <View style={styles.composeBox}>
+          <View style={[styles.composeBox, { paddingBottom: insets.bottom + 12 }]}>
             <TextInput
               style={styles.bodyInput}
               placeholder="Write the note for the selected employee(s)…"

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
   View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput,
   ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
   Image, Modal, Linking,
@@ -30,6 +31,7 @@ const dayLabel = (iso) => {
 // WhatsApp-style bubbles; polls every 4s; smart scrolling: sticks to the
 // bottom only when you're already there, with a jump-to-latest FAB otherwise.
 export default function ChatScreen({ route, navigation }) {
+  const insets = useSafeAreaInsets();
   const other = route.params?.user || null;
   const group = route.params?.group || null;
   const isGroup = !!group;
@@ -253,7 +255,7 @@ export default function ChatScreen({ route, navigation }) {
     : `@${other.username}`;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior='padding'>
       <View style={styles.container}>
         <StatusBar style="light" />
         {/* Compact thread header: back · avatar · name/subtitle, inside the shared gradient */}
@@ -370,7 +372,7 @@ export default function ChatScreen({ route, navigation }) {
         )}
 
         {/* Composer */}
-        <View style={styles.composer}>
+        <View style={[styles.composer, { paddingBottom: 10 + insets.bottom }]}>
           <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={pickFromGallery}>
             <MaterialIcons name="photo-library" size={21} color={COLORS.primary} />
           </TouchableOpacity>
@@ -402,7 +404,7 @@ export default function ChatScreen({ route, navigation }) {
           animationType="slide"
           onRequestClose={() => !uploading && setPendingMedia(null)}
         >
-          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior='padding'>
             <View style={styles.previewOverlay}>
               {/* Header */}
               <View style={styles.previewHead}>
