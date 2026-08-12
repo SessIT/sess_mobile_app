@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
   View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList,
   ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
@@ -9,6 +8,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { GradientHeader, BottomNav, PrimaryButton, Chip } from '../components/ui';
 import { COLORS } from '../lib/theme';
 import { api } from '../lib/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /* Admin → employee notes (one way).
  * COMPOSE tab: pick one or more employees, write the notice, send.

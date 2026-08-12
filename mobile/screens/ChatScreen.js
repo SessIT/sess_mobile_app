@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
   View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput,
   ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
   Image, Modal, Linking,
@@ -12,6 +11,7 @@ import { File } from 'expo-file-system';
 import { api, apiUpload, API_URL } from '../lib/api';
 import { GradientHeader } from '../components/ui';
 import { COLORS, SHADOW } from '../lib/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const BASE = API_URL.replace('/api', '');
 const POLL_MS = 4000;
