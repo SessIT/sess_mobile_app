@@ -144,6 +144,7 @@ function MonthSummaryTable({ rows, onPick, requiredHours }) {
             <th className="px-3 py-2 text-center font-semibold">Late</th>
             <th className="px-3 py-2 text-right font-semibold">Required</th>
             <th className="px-3 py-2 text-right font-semibold">Worked</th>
+            <th className="px-3 py-2 text-right font-semibold">OT</th>
           </tr>
         </thead>
         <tbody>
@@ -170,6 +171,9 @@ function MonthSummaryTable({ rows, onPick, requiredHours }) {
                 </td>
                 <td className={cx('px-3 py-2.5 text-right font-semibold tabular-nums', short ? 'text-amber-600' : 'text-emerald-600')}>
                   {fmtHours(r.hours)}
+                </td>
+                <td className={cx('px-3 py-2.5 text-right font-semibold tabular-nums', r.otHours > 0 ? 'text-brand-700' : 'text-slate-300')}>
+                  {r.otHours > 0 ? fmtHours(r.otHours) : '—'}
                 </td>
               </tr>
             );
@@ -227,13 +231,14 @@ function MonthUserDetail({ month, user, onBack }) {
 
       {!loading && !error && stats && (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             <MiniStat label="Present" value={stats.present} tone="green" icon={<IconCheckCircle className="h-4 w-4" />} />
             <MiniStat label="Leave" value={stats.leave ?? 0} tone="blue" icon={<IconLeave className="h-4 w-4" />} />
             <MiniStat label="Absent" value={stats.absent} tone="red" icon={<IconBan className="h-4 w-4" />} />
             <MiniStat label="Late" value={stats.late} tone="amber" icon={<IconClock className="h-4 w-4" />} />
             <MiniStat label="Required" value={fmtHours(data.requiredHours)} sub={data.hoursPerDay ? `${data.hoursPerDay} h/day` : ''} tone="slate" icon={<IconCalendar className="h-4 w-4" />} />
             <MiniStat label="Worked" value={fmtHours(stats.hours)} tone="blue" icon={<IconTimer className="h-4 w-4" />} />
+            <MiniStat label="OT" value={fmtHours(stats.otHours || 0)} sub="approved overtime" tone="blue" icon={<IconClock className="h-4 w-4" />} />
           </div>
 
           {days.length === 0 ? (
@@ -347,10 +352,10 @@ function MonthTab() {
       `Working days so far:,${data.workingDaysSoFar}`,
       `Required hours:,${data.requiredHours} (${data.hoursPerDay || 8}h/day)`,
       '',
-      'Name,Username,Present,Leave,Absent,Late,Required Hours,Worked Hours',
+      'Name,Username,Present,Leave,Absent,Late,Required Hours,Worked Hours,OT Hours',
       ...rows.map((r) => [
         esc(r.fullName || r.username), r.username, r.present, r.leave ?? 0,
-        r.absent, r.late, r.requiredHours ?? data.requiredHours, r.hours,
+        r.absent, r.late, r.requiredHours ?? data.requiredHours, r.hours, r.otHours ?? 0,
       ].join(',')),
     ];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });

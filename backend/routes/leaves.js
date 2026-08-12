@@ -12,11 +12,15 @@ const ymdIST = (d) => new Date(new Date(d).getTime() + 5.5 * 3600000).toISOStrin
 const intYear = (v) => (/^\d{4}$/.test(String(v || '')) ? Number(v) : Number(ymdIST(new Date()).slice(0, 4)));
 
 // Default paid-leave categories, seeded on first use.
+// CO (compensation leave) is special: its quota is not policy-driven — it is
+// earned, one day per approved comp-off credit (see routes/compoff.js).
 const DEFAULT_TYPES = [
   { code: 'CL', name: 'Casual Leave' },
   { code: 'SL', name: 'Sick Leave' },
   { code: 'PL', name: 'Privilege Leave' },
+  { code: 'CO', name: 'Compensation Leave' },
 ];
+const CO = 'CO';
 async function ensureTypes() {
   for (const t of DEFAULT_TYPES) {
     await prisma.leaveType.upsert({ where: { code: t.code }, update: {}, create: t });
@@ -46,9 +50,10 @@ async function countLeaveDays(startYmd, endYmd, halfDay) {
 }
 
 // Per-type balances for a user in a year: quota, approved-used, pending, available.
+// CO's quota is dynamic — the number of approved comp-off credits that year.
 async function balancesFor(userId, year) {
   await ensureTypes();
-  const [types, policies, reqs] = await Promise.all([
+  const [types, policies, reqs, compOffEarned] = await Promise.all([
     prisma.leaveType.findMany({ where: { active: true }, orderBy: { id: 'asc' } }),
     prisma.leavePolicy.findMany({ where: { year } }),
     prisma.leaveRequest.findMany({
@@ -58,8 +63,16 @@ async function balancesFor(userId, year) {
         startDate: { gte: dateOnly(`${year}-01-01`), lt: dateOnly(`${year + 1}-01-01`) },
       },
     }),
+    prisma.compOffRequest.count({
+      where: {
+        userId,
+        status: 'approved',
+        workDate: { gte: dateOnly(`${year}-01-01`), lt: dateOnly(`${year + 1}-01-01`) },
+      },
+    }),
   ]);
   const quota = new Map(policies.map((p) => [p.leaveTypeId, p.quota]));
+  for (const t of types) if (t.code === CO) quota.set(t.id, compOffEarned);
   const used = {}, pending = {};
   for (const r of reqs) {
     const bucket = r.status === 'approved' ? used : pending;
@@ -96,7 +109,10 @@ router.get('/policy', async (req, res) => {
     const map = new Map(policies.map((p) => [p.leaveTypeId, p.quota]));
     res.json({
       year,
-      allocations: types.map((t) => ({ leaveTypeId: t.id, code: t.code, name: t.name, quota: map.get(t.id) ?? 0 })),
+      // CO is excluded — comp-off balance is earned per approved credit, not allocated.
+      allocations: types
+        .filter((t) => t.code !== CO)
+        .map((t) => ({ leaveTypeId: t.id, code: t.code, name: t.name, quota: map.get(t.id) ?? 0 })),
     });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -106,9 +122,11 @@ router.put('/policy', requireRole(ADMIN), async (req, res) => {
   try {
     const year = intYear(req.body?.year);
     const allocations = Array.isArray(req.body?.allocations) ? req.body.allocations : [];
+    const coType = await prisma.leaveType.findUnique({ where: { code: CO } });
     for (const a of allocations) {
       const leaveTypeId = Number(a.leaveTypeId);
       if (!leaveTypeId) continue;
+      if (coType && leaveTypeId === coType.id) continue; // CO quota is earned, never set by policy
       const quota = Math.max(0, Number(a.quota) || 0);
       await prisma.leavePolicy.upsert({
         where: { year_leaveTypeId: { year, leaveTypeId } },
@@ -186,7 +204,11 @@ router.post('/requests', async (req, res) => {
     const year = Number(startDate.slice(0, 4));
     const bal = (await balancesFor(req.user.sub, year)).find((b) => b.leaveTypeId === type.id);
     if (!bal || bal.quota <= 0)
-      return res.status(400).json({ message: `No ${type.name} allocated for ${year}. Contact HR.` });
+      return res.status(400).json({
+        message: type.code === CO
+          ? 'No comp-off credits available — work a week-off/holiday and get it approved first'
+          : `No ${type.name} allocated for ${year}. Contact HR.`,
+      });
     if (days > bal.available)
       return res.status(400).json({ message: `Only ${bal.available} day(s) of ${type.code} available` });
 

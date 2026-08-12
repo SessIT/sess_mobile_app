@@ -9,6 +9,8 @@ import TeamAttendance from './pages/TeamAttendance';
 import TeamTrail from './pages/TeamTrail';
 import Holidays from './pages/Holidays';
 import Leaves from './pages/Leaves';
+import Overtime from './pages/Overtime';
+import CompOff from './pages/CompOff';
 import Sites from './pages/Sites';
 // import Reports from './pages/Reports';
 import Chat from './pages/Chat';
@@ -28,6 +30,8 @@ export default function App() {
               <Route path="/trail" element={<TeamTrail />} />
               <Route path="/holidays" element={<Holidays />} />
               <Route path="/leaves" element={<Leaves />} />
+              <Route path="/overtime" element={<Overtime />} />
+              <Route path="/compoff" element={<CompOff />} />
               <Route path="/sites" element={<Sites />} />
               {/* <Route path="/reports" element={<Reports />} /> */}
               <Route path="/chat" element={<Chat />} />
