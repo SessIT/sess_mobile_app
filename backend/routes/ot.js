@@ -11,6 +11,21 @@ const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const dateOnly = (ymd) => new Date(ymd + 'T00:00:00.000Z');
 const ymdIST = (d) => new Date(new Date(d).getTime() + 5.5 * 3600000).toISOString().slice(0, 10);
 const monthOf = (v) => (/^\d{4}-\d{2}$/.test(String(v || '')) ? v : ymdIST(new Date()).slice(0, 7));
+// Optional list filters. Anything unparseable returns null and is ignored — a
+// stray query string must never break an approval list.
+const intOrNull = (v) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; };
+// Hard ceiling on an admin list page — see GET /requests.
+const LIST_MAX = 500;
+// Shape alone is not enough: new Date('2026-02-30T00:00:00Z') is not Invalid,
+// it rolls forward to 03-02 and would silently shift the window. Round-trip the
+// date and reject anything that does not come back as the string we were given.
+const ymdOrNull = (v) => {
+  const s = String(v || '');
+  if (!YMD.test(s)) return null;
+  const d = dateOnly(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10) === s ? s : null;
+};
 
 // "YYYY-MM-DD" + "HH:MM" (IST) -> instant. End times at/before the start roll
 // over to the next day, so late-night OT like 22:00 → 01:00 works.
@@ -128,20 +143,37 @@ router.delete('/requests/:id', async (req, res) => {
 
 /* ==================== ADMIN ==================== */
 
-// GET /api/ot/requests?status=&month=YYYY-MM (admin) — all OT entries
+// GET /api/ot/requests?status=&month=YYYY-MM&userId=&from=&to= (admin) — all OT entries
 router.get('/requests', requireRole(ADMIN), async (req, res) => {
   try {
     const month = monthOf(req.query.month);
-    const { from, to } = monthRange(month);
-    const where = { date: { gte: from, lt: to } };
+    // An explicit from/to window stands in for the month; `month` is still
+    // echoed back so callers that only know about it keep working.
+    let fromYmd = ymdOrNull(req.query.from);
+    let toYmd = ymdOrNull(req.query.to);
+    if (fromYmd && toYmd && fromYmd > toYmd) { fromYmd = null; toYmd = null; } // nonsense range — ignore it
+    const where = {};
+    if (fromYmd || toYmd) {
+      where.date = {};
+      if (fromYmd) where.date.gte = dateOnly(fromYmd);
+      if (toYmd) where.date.lte = dateOnly(toYmd);
+    } else {
+      const { from, to } = monthRange(month);
+      where.date = { gte: from, lt: to };
+    }
     if (['pending', 'approved', 'rejected', 'cancelled'].includes(req.query.status))
       where.status = req.query.status;
+    const userId = intOrNull(req.query.userId);
+    if (userId) where.userId = userId;
+    // An open-ended from/to window has no month to bound it, so cap the page
+    // explicitly — the admin list renders every row it is handed.
     const requests = await prisma.otRequest.findMany({
       where,
       orderBy: [{ status: 'asc' }, { date: 'desc' }, { id: 'desc' }],
+      take: LIST_MAX,
       include: includeUser,
     });
-    res.json({ month, requests });
+    res.json({ month, requests, truncated: requests.length === LIST_MAX });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 

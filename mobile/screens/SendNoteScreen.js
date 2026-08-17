@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialIcons } from '@expo/vector-icons';
 import { GradientHeader, BottomNav, PrimaryButton, Chip } from '../components/ui';
 import { COLORS } from '../lib/theme';
 import { api } from '../lib/api';
+import { useKeyboard } from '../lib/useKeyboard';
 
 /* Admin → employee notes (one way).
  * COMPOSE tab: pick one or more employees, write the notice, send.
@@ -33,6 +34,7 @@ export default function SendNoteScreen({ navigation }) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState([]);
   const [sentLoading, setSentLoading] = useState(false);
+  const kb = useKeyboard();
 
   useEffect(() => {
     api('/users')
@@ -164,11 +166,9 @@ export default function SendNoteScreen({ navigation }) {
       </GradientHeader>
 
       {tab === 'compose' ? (
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-        >
+        // The compose box is lifted by hand (see lib/useKeyboard) — a
+        // KeyboardAvoidingView cannot see the IME under Android edge-to-edge.
+        <View style={{ flex: 1 }}>
           <View style={styles.searchWrap}>
             <MaterialIcons name="search" size={19} color={COLORS.faint} />
             <TextInput
@@ -198,7 +198,8 @@ export default function SendNoteScreen({ navigation }) {
             />
           )}
 
-          <View style={styles.composeBox}>
+          {/* Keyboard up ⇒ BottomNav is hidden, so the card carries the gap itself. */}
+          <View style={[styles.composeBox, kb.visible && { paddingBottom: 14 + kb.lift }]}>
             <TextInput
               style={styles.bodyInput}
               placeholder="Write the note for the selected employee(s)…"
@@ -220,7 +221,7 @@ export default function SendNoteScreen({ navigation }) {
               Employees can read this in My Notes. They cannot reply to it.
             </Text>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       ) : sentLoading ? (
         <ActivityIndicator style={{ marginTop: 30 }} color={COLORS.primary} />
       ) : (
@@ -233,7 +234,7 @@ export default function SendNoteScreen({ navigation }) {
         />
       )}
 
-      <BottomNav navigation={navigation} active={null} />
+      {!kb.visible && <BottomNav navigation={navigation} active={null} />}
     </View>
   );
 }

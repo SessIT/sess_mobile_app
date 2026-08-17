@@ -19,10 +19,13 @@ import ChatListScreen from './screens/ChatListScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import ChatScreen from './screens/ChatScreen';
 import LeaveApprovalsScreen from './screens/LeaveApprovalsScreen';
+import LeavePolicyScreen from './screens/LeavePolicyScreen';
 import OvertimeScreen from './screens/OvertimeScreen';
 import OtApprovalsScreen from './screens/OtApprovalsScreen';
 import CompOffScreen from './screens/CompOffScreen';
 import CompOffApprovalsScreen from './screens/CompOffApprovalsScreen';
+import ExpenseScreen from './screens/ExpenseScreen';
+import ExpenseApprovalsScreen from './screens/ExpenseApprovalsScreen';
 import ProfileMenuScreen from './screens/ProfileMenuScreen';
 import TaskListScreen from './screens/TaskListScreen';
 import NotesScreen from './screens/NotesScreen';
@@ -84,10 +87,13 @@ export default function App() {
         <Stack.Screen name="Notifications" component={NotificationsScreen} />
         <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="LeaveApprovals" component={LeaveApprovalsScreen} />
+        <Stack.Screen name="LeavePolicy" component={LeavePolicyScreen} />
         <Stack.Screen name="Overtime" component={OvertimeScreen} />
         <Stack.Screen name="OtApprovals" component={OtApprovalsScreen} />
         <Stack.Screen name="CompOff" component={CompOffScreen} />
         <Stack.Screen name="CompOffApprovals" component={CompOffApprovalsScreen} />
+        <Stack.Screen name="Expense" component={ExpenseScreen} />
+        <Stack.Screen name="ExpenseApprovals" component={ExpenseApprovalsScreen} />
         <Stack.Screen name="TaskList" component={TaskListScreen} />
         <Stack.Screen name="Notes" component={NotesScreen} />
         <Stack.Screen name="SendNote" component={SendNoteScreen} />

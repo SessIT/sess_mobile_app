@@ -16,6 +16,10 @@ const BASE = API_URL.replace('/api', '');
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const thisMonth = () => todayYMD().slice(0, 7);
+const lastDayOfMonth = (ym) => {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // day 0 of the next month
+};
 const fmtT = (d) => d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '--:--';
 const fmtH = (h) => {
   const m = Math.round((h || 0) * 60);
@@ -45,6 +49,7 @@ export default function MyAttendanceScreen({ navigation }) {
   const [date, setDate] = useState(todayYMD());
   const [monthData, setMonthData] = useState(null);
   const [daySessions, setDaySessions] = useState([]);
+  const [dayHoliday, setDayHoliday] = useState(null);
   const [monthLoading, setMonthLoading] = useState(true);
   const [dayLoading, setDayLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -76,12 +81,21 @@ export default function MyAttendanceScreen({ navigation }) {
     try {
       const res = await api(`/attendance/my-day?date=${date}`);
       setDaySessions(res.sessions || []);
-    } catch { setDaySessions([]); }
+      setDayHoliday(res.holiday || null);
+    } catch { setDaySessions([]); setDayHoliday(null); }
     finally { setDayLoading(false); }
   }, [date]);
 
   useEffect(() => { loadMonth(); }, [loadMonth]);
   useEffect(() => { loadDay(); }, [loadDay]);
+
+  // Paging the grid must not strand the selection in a month we no longer hold
+  // data for — pull it into the visible month (its last elapsed day).
+  useEffect(() => {
+    if (date.slice(0, 7) === month) return;
+    const last = lastDayOfMonth(month);
+    setDate(last > todayYMD() ? todayYMD() : last);
+  }, [month, date]);
 
   useEffect(() => {
     const unsub = navigation.addListener('focus', () => { loadMonth(); loadDay(); loadCorrections(); });
@@ -127,7 +141,7 @@ export default function MyAttendanceScreen({ navigation }) {
     finally { setCorrBusy(false); }
   };
 
-  const stats = monthData?.stats || { present: 0, late: 0, leave: 0, absent: 0, weekoff: 0, hours: 0 };
+  const stats = monthData?.stats || { present: 0, late: 0, leave: 0, absent: 0, weekoff: 0, holiday: 0, hours: 0 };
   const requiredHrs = monthData?.requiredHours ?? 0;
 
   const markedDates = useMemo(() => {
@@ -137,6 +151,7 @@ export default function MyAttendanceScreen({ navigation }) {
         if (d.status === 'future') continue;
         let bg = null, txt = '#fff';
         if (d.status === 'present') bg = d.lateLevel === 'late' ? COLORS.orange : COLORS.green;
+        else if (d.status === 'holiday') bg = COLORS.teal;
         else if (d.status === 'leave') bg = COLORS.purple;
         else if (d.status === 'absent') bg = COLORS.red;
         else if (d.status === 'weekoff') { bg = COLORS.line; txt = COLORS.sub; }
@@ -180,6 +195,12 @@ export default function MyAttendanceScreen({ navigation }) {
 
   const dayStatus = monthData?.days ? monthData.days.find(d => d.date === date) || null : null;
   const dayLate = isLateLevel(lateLevelOf(daySessions[0]?.punchInTime));
+  // The month grid carries holidayName for every day (even a worked one), but it
+  // lags a month change by one fetch — /my-day answers for the selected date itself.
+  const holidayName = dayStatus?.holidayName || dayHoliday?.name || null;
+  // A day nobody was rostered for. Working one is what comp-off exists for, so
+  // the correction flow stays open here — only its wording changes.
+  const isOffDay = dayStatus?.status === 'weekoff' || dayStatus?.status === 'holiday';
 
   // Quick month stats — white tiles under the header
   const CountBox = ({ label, value, color, soft, icon }) => (
@@ -293,10 +314,14 @@ export default function MyAttendanceScreen({ navigation }) {
 
         <Card style={styles.calCard}>
           {monthLoading && <ActivityIndicator size="small" color={COLORS.primary} style={{ marginVertical: 10 }} />}
+          {/* `initialDate` is the only month prop this version of
+            * react-native-calendars re-reads after mount (`current` seeds the
+            * initial state only), so it — not the selected day — is what keeps
+            * the grid on the month whose data is loaded. */}
           <Calendar
-            key={month}
-            current={date}
+            initialDate={`${month}-01`}
             maxDate={todayYMD()}
+            disableArrowRight={month >= thisMonth()}
             markingType="custom"
             markedDates={markedDates}
             onDayPress={(d) => setDate(d.dateString)}
@@ -324,6 +349,7 @@ export default function MyAttendanceScreen({ navigation }) {
               ['Late', COLORS.orange],
               ['Leave', COLORS.purple],
               ['Absent', COLORS.red],
+              ['Holiday', COLORS.teal],
               ['Week Off', '#C4C4C4'],
             ].map(([l, c]) => (
               <View key={l} style={styles.legendItem}>
@@ -344,18 +370,31 @@ export default function MyAttendanceScreen({ navigation }) {
             {dayStatus?.status && (
               <Chip
                 text={dayStatus.status === 'present' ? 'Present' :
+                  dayStatus.status === 'holiday' ? 'Holiday' :
                   dayStatus.status === 'leave' ? 'Paid Leave' :
                   dayStatus.status === 'absent' ? 'Absent' :
                   dayStatus.status === 'weekoff' ? 'Week Off' : 'Upcoming'}
                 color={dayStatus.status === 'present' ? COLORS.green :
+                  dayStatus.status === 'holiday' ? COLORS.teal :
                   dayStatus.status === 'leave' ? COLORS.purple :
                   dayStatus.status === 'absent' ? COLORS.red : COLORS.sub}
                 soft={dayStatus.status === 'present' ? COLORS.greenSoft :
+                  dayStatus.status === 'holiday' ? COLORS.tealSoft :
                   dayStatus.status === 'leave' ? COLORS.purpleSoft :
                   dayStatus.status === 'absent' ? COLORS.redSoft : COLORS.line}
               />
             )}
           </Card>
+
+          {/* Name the holiday when the day's own status hides it: a worked holiday
+            * reads "Present", and a holiday falling on a Sunday reads "Week Off".
+            * The holiday empty-state card below already carries the name itself. */}
+          {holidayName && dayStatus?.status !== 'holiday' && (
+            <View style={styles.holidayNote}>
+              <MaterialIcons name="celebration" size={14} color={COLORS.teal} />
+              <Text style={styles.holidayNoteText} numberOfLines={2}>{holidayName} · company holiday</Text>
+            </View>
+          )}
 
           {dayLoading ? (
             <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 30 }} />
@@ -364,24 +403,27 @@ export default function MyAttendanceScreen({ navigation }) {
           ) : (
             <Card style={styles.infoCard}>
               <View style={[styles.infoIconWrap, {
-                backgroundColor: dayStatus?.status === 'leave' ? COLORS.purpleSoft :
+                backgroundColor: dayStatus?.status === 'holiday' ? COLORS.tealSoft :
+                  dayStatus?.status === 'leave' ? COLORS.purpleSoft :
                   dayStatus?.status === 'weekoff' ? '#F3F4F6' :
                   dayStatus?.status === 'future' ? COLORS.indigoSoft : COLORS.redSoft,
               }]}>
                 <MaterialIcons
-                  name={dayStatus?.status === 'leave' ? 'beach-access' : dayStatus?.status === 'weekoff' ? 'weekend' : dayStatus?.status === 'future' ? 'schedule' : 'person-off'}
+                  name={dayStatus?.status === 'holiday' ? 'celebration' : dayStatus?.status === 'leave' ? 'beach-access' : dayStatus?.status === 'weekoff' ? 'weekend' : dayStatus?.status === 'future' ? 'schedule' : 'person-off'}
                   size={32}
-                  color={dayStatus?.status === 'leave' ? COLORS.purple : dayStatus?.status === 'weekoff' ? COLORS.sub : dayStatus?.status === 'future' ? COLORS.sub : COLORS.red}
+                  color={dayStatus?.status === 'holiday' ? COLORS.teal : dayStatus?.status === 'leave' ? COLORS.purple : dayStatus?.status === 'weekoff' ? COLORS.sub : dayStatus?.status === 'future' ? COLORS.sub : COLORS.red}
                 />
               </View>
               <Text style={styles.infoTitle}>
-                {dayStatus?.status === 'leave' ? 'Paid Leave'
+                {dayStatus?.status === 'holiday' ? (holidayName || 'Company Holiday')
+                  : dayStatus?.status === 'leave' ? 'Paid Leave'
                   : dayStatus?.status === 'weekoff' ? 'Week Off'
                   : dayStatus?.status === 'future' ? 'Upcoming Date'
                   : 'Absent'}
               </Text>
               <Text style={styles.infoSub}>
-                {dayStatus?.status === 'leave' ? 'Approved paid leave — counted in your effort hours'
+                {dayStatus?.status === 'holiday' ? 'Company holiday — not counted in your required hours 🎉'
+                  : dayStatus?.status === 'leave' ? 'Approved paid leave — counted in your effort hours'
                   : dayStatus?.status === 'weekoff' ? 'Enjoy your day off! 🎉'
                   : dayStatus?.status === 'future' ? 'Attendance will be recorded on this day'
                   : 'No attendance records found for this date'}
@@ -389,8 +431,12 @@ export default function MyAttendanceScreen({ navigation }) {
             </Card>
           )}
 
-          {/* Attendance correction — raise a fix for a missed punch */}
-          {!dayLoading && date <= todayYMD() && dayStatus?.status !== 'weekoff' && (
+          {/* Attendance correction — raise a fix for a missed punch. Offered on a
+            * week off / company holiday too: comp-off is credited for exactly
+            * those days, and compoff.js refuses a claim with no punch record, so
+            * this is the only self-serve way in after a forgotten punch.
+            * Future dates are still excluded — the backend rejects them anyway. */}
+          {!dayLoading && date <= todayYMD() && dayStatus?.status !== 'future' && (
             dateCorrection ? (
               <View style={[styles.corrStatus, {
                 backgroundColor: dateCorrection.status === 'approved' ? COLORS.greenSoft : COLORS.orangeSoft,
@@ -406,8 +452,10 @@ export default function MyAttendanceScreen({ navigation }) {
               </View>
             ) : (
               <TouchableOpacity style={styles.corrBtn} activeOpacity={0.85} onPress={openCorrection}>
-                <MaterialIcons name="build-circle" size={18} color={COLORS.primary} />
-                <Text style={styles.corrBtnText}>Missed a punch? Request correction</Text>
+                <MaterialIcons name={isOffDay ? 'event-available' : 'build-circle'} size={18} color={COLORS.primary} />
+                <Text style={styles.corrBtnText}>
+                  {isOffDay ? 'Worked this day? Add attendance' : 'Missed a punch? Request correction'}
+                </Text>
               </TouchableOpacity>
             )
           )}
@@ -418,17 +466,27 @@ export default function MyAttendanceScreen({ navigation }) {
       <Modal visible={corrModal} transparent animationType="fade" onRequestClose={() => setCorrModal(false)}>
         <View style={styles.corrOverlay}>
           <View style={styles.corrCard}>
-            <Text style={styles.corrTitle}>Attendance Correction</Text>
+            <Text style={styles.corrTitle}>{isOffDay ? 'Add Attendance' : 'Attendance Correction'}</Text>
             <Text style={styles.corrSub}>{prettyDate(date)}</Text>
+            {/* On a non-working day there is nothing to "correct" — say what the
+              * request is actually for, and why it is worth raising. */}
+            {isOffDay && (
+              <Text style={styles.corrHint}>
+                {holidayName || 'Week off'} — enter the hours you worked. Once HR approves,
+                the punch record exists and you can claim comp-off for the day.
+              </Text>
+            )}
 
-            <Text style={styles.corrLabel}>CORRECT PUNCH-IN (HH:MM, 24h — blank to keep)</Text>
+            <Text style={styles.corrLabel}>
+              {isOffDay ? 'PUNCH-IN (HH:MM, 24h)' : 'CORRECT PUNCH-IN (HH:MM, 24h — blank to keep)'}
+            </Text>
             <TextInput
               style={styles.corrInput} placeholder="09:30" placeholderTextColor={COLORS.faint}
               keyboardType="numbers-and-punctuation" maxLength={5}
               value={corrIn} onChangeText={setCorrIn}
             />
 
-            <Text style={styles.corrLabel}>CORRECT PUNCH-OUT (blank to keep)</Text>
+            <Text style={styles.corrLabel}>{isOffDay ? 'PUNCH-OUT' : 'CORRECT PUNCH-OUT (blank to keep)'}</Text>
             <TextInput
               style={styles.corrInput} placeholder="18:00" placeholderTextColor={COLORS.faint}
               keyboardType="numbers-and-punctuation" maxLength={5}
@@ -438,7 +496,7 @@ export default function MyAttendanceScreen({ navigation }) {
             <Text style={styles.corrLabel}>REASON *</Text>
             <TextInput
               style={[styles.corrInput, { height: 70, textAlignVertical: 'top', paddingTop: 10 }, !corrReason.trim() && { borderColor: '#FCA5A5' }]}
-              placeholder="e.g. Forgot to punch out while leaving site"
+              placeholder={isOffDay ? 'e.g. Worked the holiday at the client site, forgot to punch in' : 'e.g. Forgot to punch out while leaving site'}
               placeholderTextColor={COLORS.faint}
               multiline maxLength={500}
               value={corrReason} onChangeText={setCorrReason}
@@ -503,7 +561,10 @@ const styles = StyleSheet.create({
   /* calendar */
   calCard: { padding: 12, marginBottom: 16 },
   legendRow: {
-    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 14,
+    // Six statuses no longer fit one line on a 360dp phone — wrap and keep the
+    // rows visually separated instead of letting the row overflow the card.
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
+    columnGap: 12, rowGap: 8,
     paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6', marginTop: 4,
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -526,6 +587,10 @@ const styles = StyleSheet.create({
   corrCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 20 },
   corrTitle: { fontSize: 17, fontWeight: '800', color: COLORS.ink, textAlign: 'center' },
   corrSub: { fontSize: 12, color: COLORS.sub, textAlign: 'center', marginTop: 3, marginBottom: 6 },
+  corrHint: {
+    fontSize: 11.5, color: COLORS.teal, fontWeight: '600', lineHeight: 16, textAlign: 'center',
+    backgroundColor: COLORS.tealSoft, borderRadius: 10, padding: 9, marginTop: 4,
+  },
   corrLabel: { fontSize: 10.5, fontWeight: '800', color: COLORS.faint, letterSpacing: 0.6, marginTop: 12, marginBottom: 6 },
   corrInput: {
     backgroundColor: COLORS.field, borderWidth: 1.5, borderColor: COLORS.line,
@@ -554,6 +619,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   dateHeadText: { fontSize: 14, fontWeight: '800', color: COLORS.ink, flex: 1 },
+
+  holidayNote: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    backgroundColor: COLORS.tealSoft, borderRadius: 11,
+    paddingHorizontal: 10, paddingVertical: 6, marginTop: -2, marginBottom: 12,
+  },
+  holidayNoteText: { flexShrink: 1, color: COLORS.teal, fontSize: 11.5, fontWeight: '800' },
 
   sessCard: { padding: 14, marginBottom: 12 },
   sessHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },

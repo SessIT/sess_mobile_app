@@ -5,12 +5,13 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Calendar } from 'react-native-calendars';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api } from '../lib/api';
 import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, SectionLabel } from '../components/ui';
-import { COLORS, RADIUS, SHADOW } from '../lib/theme';
+import { COLORS, GREEN_GRADIENT, RADIUS, SHADOW } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const thisMonth = () => todayYMD().slice(0, 7);
@@ -34,14 +35,32 @@ const STATUS = {
   leave: { label: 'Paid Leave', color: COLORS.purple, bg: COLORS.purpleSoft },
   absent: { label: 'Absent', color: COLORS.red, bg: COLORS.redSoft },
   weekoff: { label: 'Week Off', color: COLORS.faint, bg: '#F3F4F6' },
+  holiday: { label: 'Holiday', color: COLORS.teal, bg: COLORS.tealSoft },
   future: { label: '—', color: '#D1D5DB', bg: '#FAFAFA' },
 };
 // True late (>= 09:41) shows orange; on-time and grace arrivals stay green (present).
 const LATE_VIS = { label: 'Late', color: COLORS.orange, bg: COLORS.orangeSoft };
-const dayVis = (d) => (d.status === 'present' && d.lateLevel === 'late' ? LATE_VIS : STATUS[d.status]);
+// Unknown statuses would otherwise read `.bg` off undefined and crash the month
+// list, so fall back to the neutral "future" chip.
+const dayVis = (d) => (d.status === 'present' && d.lateLevel === 'late' ? LATE_VIS : STATUS[d.status] || STATUS.future);
+
+/* Correction requests — the dates come back as UTC-midnight @db.Date, the
+ * requested punches as real timestamps, so they format in different zones. */
+const CORR_FILTERS = ['pending', 'approved', 'rejected', 'all'];
+const CORR_STATUS = {
+  pending: { label: 'Pending', c: COLORS.orange, bg: COLORS.orangeSoft },
+  approved: { label: 'Approved', c: COLORS.green, bg: COLORS.greenSoft },
+  rejected: { label: 'Rejected', c: COLORS.red, bg: COLORS.redSoft },
+  cancelled: { label: 'Cancelled', c: COLORS.sub, bg: '#F3F4F6' },
+};
+const prettyDate = (iso) =>
+  new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const fmtT12 = (d) => d
+  ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
+  : '—';
 
 export default function TeamAttendanceScreen({ navigation }) {
-  const [mode, setMode] = useState('day'); // 'day' | 'month'
+  const [mode, setMode] = useState('day'); // 'day' | 'month' | 'corrections'
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null); // null = All
   const [date, setDate] = useState(todayYMD());
@@ -62,23 +81,46 @@ export default function TeamAttendanceScreen({ navigation }) {
   const [editor, setEditor] = useState(null);            // session editor modal state
   const [savingEditor, setSavingEditor] = useState(false);
 
+  // Correction requests (admin review of employee-raised punch fixes)
+  const [corrFilter, setCorrFilter] = useState('pending');
+  const [corrections, setCorrections] = useState([]);
+  const [corrPending, setCorrPending] = useState(0);
+  const [corrBusyId, setCorrBusyId] = useState(null);
+
   useEffect(() => {
     api('/users').then(setUsers).catch(() => {});
   }, []);
+
+  // The segment badge must stay right even when the tab is filtered to
+  // approved/rejected, or never opened at all — so count it separately.
+  const loadPendingCount = useCallback(async () => {
+    try {
+      const res = await api('/attendance/admin/corrections?status=pending');
+      setCorrPending((res.requests || []).length);
+    } catch { /* badge only — never block the screen on it */ }
+  }, []);
+
+  useEffect(() => { loadPendingCount(); }, [loadPendingCount]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setData(null);
     try {
-      if (mode === 'day') {
+      if (mode === 'corrections') {
+        const res = await api(`/attendance/admin/corrections${corrFilter === 'all' ? '' : `?status=${corrFilter}`}`);
+        const rows = res.requests || [];
+        setCorrections(rows);
+        if (corrFilter === 'pending') setCorrPending(rows.length);
+        else loadPendingCount();
+      } else if (mode === 'day') {
         setData(await api(`/attendance/admin/day?date=${date}`));
       } else {
         const q = selected ? `&userId=${selected.id}` : '';
         setData(await api(`/attendance/admin/month?month=${month}${q}`));
       }
-    } catch (e) { Alert.alert('Error', e.message); setData(null); }
+    } catch (e) { Alert.alert('Error', e.message); setData(null); setCorrections([]); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [mode, date, month, selected]);
+  }, [mode, date, month, selected, corrFilter, loadPendingCount]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -105,12 +147,16 @@ export default function TeamAttendanceScreen({ navigation }) {
       let lines = [], fname = '';
       if (mode === 'day') {
         fname = `attendance_day_${date}.csv`;
+        // On a company holiday nobody was expected in, so the non-punchers are
+        // HOLIDAY, not absentees.
+        const offStatus = data.holiday ? 'HOLIDAY' : 'Absent';
         lines = [
-          `Date:,${date}`, `Present:,${data.present.length},Total:,${data.totalUsers}`, '',
+          `Date:,${date}`, `Present:,${data.present.length},Total:,${data.totalUsers}`,
+          ...(data.holiday ? [`Holiday:,${esc(data.holiday.name)}`] : []), '',
           'Name,Username,Status,First In,Last Out,Sessions,Hours,Late,Sites',
           ...data.present.map(p => [esc(p.fullName || p.username), p.username, p.open ? 'ON DUTY' : 'Present',
             fmtT(p.firstIn), fmtT(p.lastOut), p.sessions, p.hours, p.late ? 'LATE' : '', esc(p.sites.join(' | '))].join(',')),
-          ...data.absent.map(a => [esc(a.fullName || a.username), a.username, 'Absent', '', '', 0, 0, '', ''].join(',')),
+          ...data.absent.map(a => [esc(a.fullName || a.username), a.username, offStatus, '', '', 0, 0, '', ''].join(',')),
         ];
       } else if (!selected) {
         fname = `attendance_${month}_all.csv`;
@@ -128,7 +174,8 @@ export default function TeamAttendanceScreen({ navigation }) {
           `Present:,${data.stats.present},Leave:,${data.stats.leave ?? 0},Absent:,${data.stats.absent},Late:,${data.stats.late}`,
           `Required Hours:,${data.requiredHours},Worked Hours:,${data.stats.hours}`, '',
           'Date,Weekday,Status,First In,Last Out,Sessions,Hours,Late,Sites',
-          ...data.days.map(d => [d.date, WD[d.weekday], STATUS[d.status].label,
+          ...data.days.map(d => [d.date, WD[d.weekday],
+            d.status === 'holiday' ? 'HOLIDAY' : (STATUS[d.status]?.label ?? d.status),
             fmtT(d.firstIn), fmtT(d.lastOut), d.sessions, d.hours, d.late ? 'LATE' : '', esc(d.sites.join(' | '))].join(',')),
         ];
       }
@@ -217,6 +264,36 @@ export default function TeamAttendanceScreen({ navigation }) {
     ]);
   };
 
+  /* ---------- Correction requests ---------- */
+  // Approving is not just a status flip: the server applies the requested
+  // punches to that day's sessions, so confirm who/when before sending.
+  const decideCorrection = (r, status) => {
+    const who = r.user?.fullName || r.user?.username;
+    const when = prettyDate(r.date);
+    const go = async () => {
+      setCorrBusyId(r.id);
+      try {
+        await api(`/attendance/admin/corrections/${r.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status, reviewNote: '' }),
+        });
+        load();
+      } catch (e) { Alert.alert('Failed', e.message); }
+      finally { setCorrBusyId(null); }
+    };
+    if (status === 'approved') {
+      Alert.alert('Approve correction', `Apply the corrected punches for ${who} on ${when}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Approve', onPress: go },
+      ]);
+    } else {
+      Alert.alert('Reject correction', `Reject the correction for ${who} on ${when}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reject', style: 'destructive', onPress: go },
+      ]);
+    }
+  };
+
   const filteredUsers = users.filter(u =>
     (u.username + ' ' + (u.fullName || '')).toLowerCase().includes(search.toLowerCase()));
 
@@ -238,43 +315,61 @@ export default function TeamAttendanceScreen({ navigation }) {
       >
         {/* Mode toggle */}
         <View style={styles.segment}>
-          {['day', 'month'].map(mv => (
+          {['day', 'month', 'corrections'].map(mv => (
             <TouchableOpacity key={mv} style={[styles.segBtn, mode === mv && styles.segBtnActive]}
               onPress={() => setMode(mv)}>
-              <Text style={[styles.segText, mode === mv && styles.segTextActive]}>
-                {mv === 'day' ? 'Day View' : 'Month View'}
-              </Text>
+              <View style={styles.segInner}>
+                <Text style={[styles.segText, mode === mv && styles.segTextActive]}>
+                  {mv === 'day' ? 'Day View' : mv === 'month' ? 'Month View' : 'Corrections'}
+                </Text>
+                {mv === 'corrections' && corrPending > 0 && (
+                  <View style={styles.segBadge}><Text style={styles.segBadgeText}>{corrPending}</Text></View>
+                )}
+              </View>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* Filters */}
-        <View style={styles.filterRow}>
-          <TouchableOpacity style={[styles.filterField, { flex: 1.2 }]} onPress={() => { setSearch(''); setEmpModal(true); }}>
-            <MaterialIcons name="person" size={17} color="#C7D2FE" />
-            <Text style={styles.filterText} numberOfLines={1}>
-              {selected ? (selected.fullName || selected.username) : 'All Employees'}
-            </Text>
-            <MaterialIcons name="arrow-drop-down" size={22} color="#C7D2FE" />
-          </TouchableOpacity>
-
-          {mode === 'day' ? (
-            <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setCalModal(true)}>
-              <MaterialIcons name="calendar-month" size={17} color="#C7D2FE" />
-              <Text style={styles.filterText}>{date === todayYMD() ? 'Today' : date}</Text>
+        {/* Filters — day/month pick an employee + period, corrections pick a status */}
+        {mode === 'corrections' ? (
+          <View style={[styles.segment, styles.statusSeg]}>
+            {CORR_FILTERS.map(f => (
+              <TouchableOpacity key={f} style={[styles.segBtn, styles.statusBtn, corrFilter === f && styles.segBtnActive]}
+                onPress={() => setCorrFilter(f)}>
+                <Text style={[styles.segText, styles.statusText, corrFilter === f && styles.segTextActive]}>
+                  {f[0].toUpperCase() + f.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.filterRow}>
+            <TouchableOpacity style={[styles.filterField, { flex: 1.2 }]} onPress={() => { setSearch(''); setEmpModal(true); }}>
+              <MaterialIcons name="person" size={17} color="#C7D2FE" />
+              <Text style={styles.filterText} numberOfLines={1}>
+                {selected ? (selected.fullName || selected.username) : 'All Employees'}
+              </Text>
+              <MaterialIcons name="arrow-drop-down" size={22} color="#C7D2FE" />
             </TouchableOpacity>
-          ) : (
-            <View style={[styles.filterField, { flex: 1.1, paddingHorizontal: 4 }]}>
-              <TouchableOpacity onPress={() => shiftMonth(-1)} style={{ padding: 4 }}>
-                <MaterialIcons name="chevron-left" size={22} color="#C7D2FE" />
+
+            {mode === 'day' ? (
+              <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setCalModal(true)}>
+                <MaterialIcons name="calendar-month" size={17} color="#C7D2FE" />
+                <Text style={styles.filterText}>{date === todayYMD() ? 'Today' : date}</Text>
               </TouchableOpacity>
-              <Text style={[styles.filterText, { textAlign: 'center' }]}>{monthLabel(month)}</Text>
-              <TouchableOpacity onPress={() => shiftMonth(1)} disabled={month >= thisMonth()} style={{ padding: 4, opacity: month >= thisMonth() ? 0.3 : 1 }}>
-                <MaterialIcons name="chevron-right" size={22} color="#C7D2FE" />
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
+            ) : (
+              <View style={[styles.filterField, { flex: 1.1, paddingHorizontal: 4 }]}>
+                <TouchableOpacity onPress={() => shiftMonth(-1)} style={{ padding: 4 }}>
+                  <MaterialIcons name="chevron-left" size={22} color="#C7D2FE" />
+                </TouchableOpacity>
+                <Text style={[styles.filterText, { textAlign: 'center' }]}>{monthLabel(month)}</Text>
+                <TouchableOpacity onPress={() => shiftMonth(1)} disabled={month >= thisMonth()} style={{ padding: 4, opacity: month >= thisMonth() ? 0.3 : 1 }}>
+                  <MaterialIcons name="chevron-right" size={22} color="#C7D2FE" />
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
       </GradientHeader>
 
       {loading ? (
@@ -290,6 +385,16 @@ export default function TeamAttendanceScreen({ navigation }) {
           {/* ===== DAY VIEW ===== */}
           {mode === 'day' && data?.present && (
             <>
+              {/* A company holiday explains an otherwise alarming all-absent list. */}
+              {data.holiday && (
+                <View style={styles.holidayBanner}>
+                  <MaterialIcons name="celebration" size={18} color={COLORS.teal} />
+                  <Text style={styles.holidayText} numberOfLines={2}>
+                    {data.holiday.name} · company holiday
+                  </Text>
+                </View>
+              )}
+
               <View style={styles.sumRow}>
                 <Chip icon="check-circle" text={`${data.present.length}/${data.totalUsers} Present`}
                   color={COLORS.green} soft={COLORS.greenSoft} />
@@ -318,21 +423,29 @@ export default function TeamAttendanceScreen({ navigation }) {
                 </TouchableOpacity>
               ))}
 
-              {dayAbsent.length > 0 && (
-                <>
-                  <SectionLabel text={`ABSENT (${dayAbsent.length})`}
-                    right={<Text style={styles.hint}>tap to add attendance</Text>} />
-                  <View style={styles.absentWrap}>
-                    {dayAbsent.map(a => (
-                      <TouchableOpacity key={a.id} style={styles.absentChip} activeOpacity={0.8}
-                        onPress={() => openCreate(a)}>
-                        <MaterialIcons name="add" size={14} color={COLORS.red} />
-                        <Text style={styles.absentText}>{a.fullName || a.username}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </>
-              )}
+              {dayAbsent.length > 0 && (() => {
+                // On a company holiday nobody is absent — they are simply off, so
+                // the heading and the chips drop the alarming red. Membership and
+                // counts are untouched; this matches the web console.
+                const off = !!data.holiday;
+                return (
+                  <>
+                    <SectionLabel text={`${off ? 'OFF FOR THE HOLIDAY' : 'ABSENT'} (${dayAbsent.length})`}
+                      right={<Text style={styles.hint} numberOfLines={1}>
+                        {off ? 'tap if they worked' : 'tap to add attendance'}
+                      </Text>} />
+                    <View style={styles.absentWrap}>
+                      {dayAbsent.map(a => (
+                        <TouchableOpacity key={a.id} style={[styles.absentChip, off && styles.offChip]} activeOpacity={0.8}
+                          onPress={() => openCreate(a)}>
+                          <MaterialIcons name="add" size={14} color={off ? COLORS.teal : COLORS.red} />
+                          <Text style={[styles.absentText, off && styles.offText]}>{a.fullName || a.username}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                );
+              })()}
             </>
           )}
 
@@ -433,6 +546,11 @@ export default function TeamAttendanceScreen({ navigation }) {
                       <View style={styles.nameRow}>
                         <Chip text={st.label} color={st.color} soft={st.bg} />
                         {d.late && <View style={styles.lateBadge}><Text style={styles.lateText}>LATE</Text></View>}
+                        {/* Name the holiday — also on a worked one, where the row
+                            reads 'Present' and would otherwise hide the reason. */}
+                        {d.holidayName && (
+                          <Text style={styles.holidayName} numberOfLines={1}>{d.holidayName}</Text>
+                        )}
                       </View>
                       {d.status === 'present' && (
                         <>
@@ -451,6 +569,73 @@ export default function TeamAttendanceScreen({ navigation }) {
                 );
               })}
             </>
+          )}
+
+          {/* ===== CORRECTIONS ===== */}
+          {mode === 'corrections' && (
+            corrections.length === 0 ? (
+              <View style={styles.empty}>
+                <MaterialIcons name="fact-check" size={44} color="#CBD5E1" />
+                <Text style={styles.emptyText}>No {corrFilter === 'all' ? '' : corrFilter} correction requests</Text>
+              </View>
+            ) : (
+              corrections.map(r => {
+                const st = CORR_STATUS[r.status] || CORR_STATUS.cancelled;
+                const busy = corrBusyId === r.id;
+                return (
+                  <Card key={r.id} style={styles.reqCard}>
+                    <View style={styles.cardTop}>
+                      <View style={styles.avatar}>
+                        <Text style={styles.avatarText}>{initials(r.user?.fullName || r.user?.username)}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.name}>{r.user?.fullName || r.user?.username}</Text>
+                        <Text style={styles.eSub}>@{r.user?.username}</Text>
+                      </View>
+                      <Chip text={st.label} color={st.c} soft={st.bg} />
+                    </View>
+
+                    <View style={styles.corrRow}>
+                      <MaterialIcons name="event" size={15} color={COLORS.sub} />
+                      <Text style={styles.corrText}>{prettyDate(r.date)}</Text>
+                    </View>
+                    <View style={styles.corrRow}>
+                      <MaterialIcons name="schedule" size={15} color={COLORS.sub} />
+                      <Text style={styles.corrText}>{fmtT12(r.requestedIn)} → {fmtT12(r.requestedOut)}</Text>
+                    </View>
+                    {r.reason ? <Text style={styles.reason}>“{r.reason}”</Text> : null}
+                    {r.status !== 'pending' && r.reviewedBy ? (
+                      <Text style={styles.reviewLine}>
+                        {st.label} by {r.reviewedBy.fullName || r.reviewedBy.username}
+                        {r.reviewNote ? ` • ${r.reviewNote}` : ''}
+                      </Text>
+                    ) : null}
+
+                    {r.status === 'pending' && (
+                      <View style={styles.actions}>
+                        <TouchableOpacity style={[styles.actBtn, styles.rejectBtn, busy && { opacity: 0.5 }]}
+                          disabled={busy} onPress={() => decideCorrection(r, 'rejected')}>
+                          <MaterialIcons name="close" size={17} color={COLORS.red} />
+                          <Text style={[styles.actText, { color: COLORS.red }]}>Reject</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.85}
+                          disabled={busy} onPress={() => decideCorrection(r, 'approved')}>
+                          <LinearGradient colors={GREEN_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                            style={[styles.actBtn, busy && { opacity: 0.75 }]}>
+                            {busy ? <ActivityIndicator color="#fff" size="small" /> : (
+                              <>
+                                <MaterialIcons name="check" size={17} color="#fff" />
+                                <Text style={[styles.actText, { color: '#fff' }]}>Approve</Text>
+                              </>
+                            )}
+                          </LinearGradient>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </Card>
+                );
+              })
+            )
           )}
         </ScrollView>
       )}
@@ -618,6 +803,15 @@ const styles = StyleSheet.create({
   segBtnActive: { backgroundColor: '#fff' },
   segText: { color: '#C7D2FE', fontSize: 13, fontWeight: '700' },
   segTextActive: { color: COLORS.primary },
+  segInner: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  segBadge: {
+    minWidth: 17, height: 17, borderRadius: 9, paddingHorizontal: 4,
+    backgroundColor: COLORS.orange, justifyContent: 'center', alignItems: 'center',
+  },
+  segBadgeText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
+  statusSeg: { marginTop: 10 },
+  statusBtn: { height: 32 },
+  statusText: { fontSize: 11.5 },
   filterRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
   filterField: {
     flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.13)',
@@ -626,6 +820,12 @@ const styles = StyleSheet.create({
   filterText: { flex: 1, color: '#fff', fontSize: 12.5, fontWeight: '700' },
 
   sumRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+
+  holidayBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.tealSoft,
+    borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12,
+  },
+  holidayText: { flex: 1, color: COLORS.teal, fontSize: 12.5, fontWeight: '800' },
 
   rowCard: {
     flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: COLORS.card,
@@ -648,10 +848,14 @@ const styles = StyleSheet.create({
   hoursBox: { backgroundColor: COLORS.indigoSoft, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 5 },
   hoursNum: { color: COLORS.primary, fontSize: 11.5, fontWeight: '800' },
 
-  hint: { fontSize: 10.5, color: COLORS.faint, fontWeight: '600', fontStyle: 'italic' },
+  // flexShrink so the longer "OFF FOR THE HOLIDAY (n)" heading cannot push this
+  // out of the row on a narrow phone (SectionLabel is a plain space-between row).
+  hint: { flexShrink: 1, fontSize: 10.5, color: COLORS.faint, fontWeight: '600', fontStyle: 'italic' },
   absentWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   absentChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.redSoft, borderRadius: 12, paddingHorizontal: 11, paddingVertical: 6 },
   absentText: { color: COLORS.red, fontSize: 12, fontWeight: '700' },
+  offChip: { backgroundColor: COLORS.tealSoft },
+  offText: { color: COLORS.teal },
 
   wdText: { fontSize: 11.5, color: COLORS.faint, fontWeight: '600', marginBottom: 10 },
   gridRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4 },
@@ -681,6 +885,7 @@ const styles = StyleSheet.create({
   dayBlock: { width: 44, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   dayNum: { fontSize: 16, fontWeight: '800' },
   dayWd: { fontSize: 9, fontWeight: '700' },
+  holidayName: { flexShrink: 1, fontSize: 10.5, color: COLORS.faint, fontWeight: '700' },
 
   /* modals */
   sheetOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' },
@@ -717,4 +922,18 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.field, borderWidth: 1.5, borderColor: COLORS.line,
     borderRadius: RADIUS.input, paddingHorizontal: 12, height: 48, fontSize: 15, color: COLORS.ink, fontWeight: '600',
   },
+
+  /* corrections tab */
+  empty: { alignItems: 'center', paddingVertical: 50, gap: 10 },
+  emptyText: { color: COLORS.faint, fontSize: 13 },
+  reqCard: { padding: 14, marginBottom: 10 },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  corrRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+  corrText: { fontSize: 13, color: '#374151', fontWeight: '600' },
+  reason: { fontSize: 12.5, color: COLORS.sub, marginTop: 8, fontStyle: 'italic' },
+  reviewLine: { fontSize: 11.5, color: COLORS.faint, fontWeight: '600', marginTop: 8 },
+  actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  actBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 46, borderRadius: RADIUS.button },
+  rejectBtn: { flex: 1, borderWidth: 1.5, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
+  actText: { fontSize: 13.5, fontWeight: '800' },
 });

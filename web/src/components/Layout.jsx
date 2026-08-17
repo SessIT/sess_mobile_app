@@ -27,6 +27,7 @@ const NAV = [
   { to: '/leaves', label: 'Leave Management', icon: IconLeave },
   { to: '/overtime', label: 'Overtime', icon: IconClock },
   { to: '/compoff', label: 'Comp-Off', icon: IconSparkles },
+  { to: '/expenses', label: 'Expenses', icon: IconChart },
   { to: '/sites', label: 'Customer Sites', icon: IconMapPin },
   // { to: '/reports', label: 'Reports', icon: IconChart },
   { to: '/chat', label: 'Team Chat', icon: IconChat },

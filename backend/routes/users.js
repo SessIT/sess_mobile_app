@@ -156,6 +156,21 @@ async function buildProfileData(body, id) {
 
 const shapeUser = (u) => ({ ...u, roles: u.roles.map((r) => r.role.name) });
 
+// Next free SESS-nnn. Derived from the highest sequence actually in use (not the user
+// count) so deleted users can't make us reissue an id. Non-conforming ids are ignored.
+async function nextEmployeeId() {
+  const rows = await prisma.user.findMany({
+    where: { employeeId: { startsWith: 'SESS-' } },
+    select: { employeeId: true },
+  });
+  let max = 0;
+  for (const r of rows) {
+    const m = /^SESS-(\d+)$/.exec(r.employeeId || '');
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `SESS-${String(max + 1).padStart(3, '0')}`;
+}
+
 // POST /api/users - create a user
 router.post('/', async (req, res) => {
   try {
@@ -185,17 +200,36 @@ router.post('/', async (req, res) => {
       where: { name: roleName }, update: {}, create: { name: roleName },
     });
 
-    const user = await prisma.user.create({
-      data: {
-        username: username.trim(),
-        fullName: (fullName || '').trim() || null,
-        phone: ph.value,
-        passwordHash: await bcrypt.hash(password, 10),
-        roles: { create: { roleId: role.id } },
-        ...prof.data,
-      },
-      select: USER_SELECT,
-    });
+    const data = {
+      username: username.trim(),
+      fullName: (fullName || '').trim() || null,
+      phone: ph.value,
+      passwordHash: await bcrypt.hash(password, 10),
+      roles: { create: { roleId: role.id } },
+      ...prof.data,
+    };
+    // An explicitly supplied Employee ID wins; otherwise the system allocates one.
+    const autoEmployeeId = !data.employeeId;
+
+    // employee_id is UNIQUE, so two concurrent creates can pick the same number:
+    // on that collision only, recompute and try again.
+    let user = null;
+    for (let attempt = 0; attempt < 5 && !user; attempt++) {
+      if (autoEmployeeId) data.employeeId = await nextEmployeeId();
+      try {
+        user = await prisma.user.create({ data, select: USER_SELECT });
+      } catch (e) {
+        const target = String(e?.meta?.target || '').toLowerCase().replace(/_/g, '');
+        const employeeIdTaken = e.code === 'P2002' && target.includes('employeeid');
+        // A typed-in id that loses the race is not retryable - the admin chose that exact
+        // value - so answer it the way buildProfileData's pre-check would have.
+        if (employeeIdTaken && !autoEmployeeId)
+          return res.status(400).json({ message: 'Employee ID already in use' });
+        if (!(autoEmployeeId && employeeIdTaken)) throw e;
+      }
+    }
+    if (!user)
+      return res.status(409).json({ message: 'Could not allocate an Employee ID, please retry' });
 
     res.status(201).json(shapeUser(user));
   } catch (e) {

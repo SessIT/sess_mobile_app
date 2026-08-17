@@ -20,6 +20,7 @@ const MY_TILES = [
   { key: 'leave', label: 'My Leave', icon: 'beach-access', screen: 'Leave' },
   { key: 'overtime', label: 'My Overtime', icon: 'more-time', screen: 'Overtime' },
   { key: 'compoff', label: 'Comp-Off', icon: 'redeem', screen: 'CompOff' },
+  { key: 'expense', label: 'My Expenses', icon: 'receipt-long', screen: 'Expense' },
   { key: 'holidays', label: 'Holiday List', icon: 'celebration', screen: 'Holidays' },
   { key: 'tasks', label: 'My Tasks', icon: 'checklist', screen: 'TaskList' },
   { key: 'notes', label: 'Notes', icon: 'sticky-note-2', screen: 'Notes' },
@@ -32,6 +33,8 @@ const ADMIN_TILES = [
   { key: 'leaveappr', label: 'Leave Approvals', icon: 'fact-check', screen: 'LeaveApprovals' },
   { key: 'otappr', label: 'OT Approvals', icon: 'more-time', screen: 'OtApprovals' },
   { key: 'coappr', label: 'Comp-Off Approvals', icon: 'redeem', screen: 'CompOffApprovals' },
+  { key: 'expappr', label: 'Expense Approvals', icon: 'receipt-long', screen: 'ExpenseApprovals' },
+  { key: 'leavepolicy', label: 'Leave Policy', icon: 'rule', screen: 'LeavePolicy' },
   { key: 'sendnote', label: 'Send Note', icon: 'campaign', screen: 'SendNote' },
 ];
 

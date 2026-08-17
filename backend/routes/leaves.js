@@ -10,6 +10,21 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const dateOnly = (ymd) => new Date(ymd + 'T00:00:00.000Z');
 const ymdIST = (d) => new Date(new Date(d).getTime() + 5.5 * 3600000).toISOString().slice(0, 10);
 const intYear = (v) => (/^\d{4}$/.test(String(v || '')) ? Number(v) : Number(ymdIST(new Date()).slice(0, 4)));
+// Optional list filters. Anything unparseable returns null and is ignored — a
+// stray query string must never break an approval list.
+const intOrNull = (v) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; };
+// Hard ceiling on an admin list page — see GET /requests.
+const LIST_MAX = 500;
+// Shape alone is not enough: new Date('2026-02-30T00:00:00Z') is not Invalid,
+// it rolls forward to 03-02 and would silently shift the window. Round-trip the
+// date and reject anything that does not come back as the string we were given.
+const ymdOrNull = (v) => {
+  const s = String(v || '');
+  if (!YMD.test(s)) return null;
+  const d = dateOnly(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10) === s ? s : null;
+};
 
 // Default paid-leave categories, seeded on first use.
 // CO (compensation leave) is special: its quota is not policy-driven — it is
@@ -245,25 +260,47 @@ router.delete('/requests/:id', async (req, res) => {
 
 /* ==================== ADMIN ==================== */
 
-// GET /api/leaves/requests?status=&year=  (admin) — all requests
+// GET /api/leaves/requests?status=&year=&userId=&leaveTypeId=&from=&to=  (admin)
+// All requests. Every filter is optional; year is the window only when neither
+// from nor to is given.
 router.get('/requests', requireRole(ADMIN), async (req, res) => {
   try {
     const year = intYear(req.query.year);
-    const where = {
-      startDate: { gte: dateOnly(`${year}-01-01`), lt: dateOnly(`${year + 1}-01-01`) },
-    };
+    // Either bound replaces the year window outright — the side that was not
+    // supplied stays unbounded, so "from 01 Jun" really does mean "and after".
+    // Both validated first, so the sanity check compares real calendar days.
+    let from = ymdOrNull(req.query.from);
+    let to = ymdOrNull(req.query.to);
+    if (from && to && from > to) { from = null; to = null; } // nonsense range — ignore it
+    const where = {};
+    if (from || to) {
+      // Overlap, not start-date: a leave running through the window belongs in
+      // the list even when it started before it. `to` is an inclusive day, and
+      // both columns are @db.Date, so lte/gte on the day itself is exact.
+      if (to) where.startDate = { lte: dateOnly(to) };
+      if (from) where.endDate = { gte: dateOnly(from) };
+    } else {
+      where.startDate = { gte: dateOnly(`${year}-01-01`), lt: dateOnly(`${year + 1}-01-01`) };
+    }
     if (['pending', 'approved', 'rejected', 'cancelled'].includes(req.query.status))
       where.status = req.query.status;
+    const userId = intOrNull(req.query.userId);
+    if (userId) where.userId = userId;
+    const leaveTypeId = intOrNull(req.query.leaveTypeId);
+    if (leaveTypeId) where.leaveTypeId = leaveTypeId;
+    // An open-ended from/to window has no calendar year to bound it, so cap the
+    // page explicitly — the admin list renders every row it is handed.
     const requests = await prisma.leaveRequest.findMany({
       where,
       orderBy: [{ status: 'asc' }, { appliedAt: 'desc' }],
+      take: LIST_MAX,
       include: {
         leaveType: { select: { code: true, name: true } },
         user: { select: { id: true, username: true, fullName: true } },
         reviewedBy: { select: { fullName: true, username: true } },
       },
     });
-    res.json({ year, requests });
+    res.json({ year, requests, truncated: requests.length === LIST_MAX });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 

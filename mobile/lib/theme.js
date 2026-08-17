@@ -24,6 +24,8 @@ export const COLORS = {
   redSoft: '#FEE2E2',
   purple: '#7C3AED',
   purpleSoft: '#EDE9FE',
+  teal: '#0D9488',         // company holiday — reads apart from present/late/leave/absent
+  tealSoft: '#CCFBF1',
 };
 
 // Header / brand gradient (dark indigo, top-left → bottom-right)

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Image,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Alert, Modal, RefreshControl,
+  ActivityIndicator, Alert, Modal, RefreshControl,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import { File } from 'expo-file-system';
 import { GradientHeader, BottomNav } from '../components/ui';
 import { COLORS } from '../lib/theme';
 import { api, apiUpload, API_URL } from '../lib/api';
+import { useKeyboard } from '../lib/useKeyboard';
 
 const BASE = API_URL.replace('/api', '');
 
@@ -39,6 +40,7 @@ export default function NotesScreen({ navigation }) {
   const [editing, setEditing] = useState(null);           // { id, body } while editing a self note
   const [viewPhoto, setViewPhoto] = useState(null);       // full-screen photo viewer
   const inputRef = useRef(null);
+  const kb = useKeyboard();
 
   const load = useCallback(async () => {
     try {
@@ -205,11 +207,9 @@ export default function NotesScreen({ navigation }) {
         onBack={() => navigation.goBack()}
       />
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-      >
+      {/* The composer is lifted by hand (see lib/useKeyboard) — a
+          KeyboardAvoidingView cannot see the IME under Android edge-to-edge. */}
+      <View style={{ flex: 1 }}>
         {loading ? (
           <ActivityIndicator style={{ marginTop: 40 }} color={COLORS.primary} />
         ) : (
@@ -218,6 +218,7 @@ export default function NotesScreen({ navigation }) {
             keyExtractor={(n) => String(n.id)}
             renderItem={renderNote}
             contentContainerStyle={styles.list}
+            keyboardShouldPersistTaps="handled"
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={COLORS.primary} />
             }
@@ -256,8 +257,9 @@ export default function NotesScreen({ navigation }) {
           </View>
         )}
 
-        {/* composer — self notes only */}
-        <View style={styles.composer}>
+        {/* composer — self notes only. While the keyboard is up the BottomNav is
+            gone, so the composer carries the whole bottom gap itself. */}
+        <View style={[styles.composer, kb.visible && { paddingBottom: 10 + kb.lift }]}>
           <TouchableOpacity
             style={[styles.attachBtn, (editing || uploading) && { opacity: 0.4 }]}
             onPress={photoOptions}
@@ -286,7 +288,7 @@ export default function NotesScreen({ navigation }) {
               : <MaterialIcons name={editing ? 'check' : 'send'} size={22} color="#fff" />}
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       <Modal visible={!!viewPhoto} transparent animationType="fade" onRequestClose={() => setViewPhoto(null)}>
         <View style={styles.viewer}>
@@ -297,7 +299,7 @@ export default function NotesScreen({ navigation }) {
         </View>
       </Modal>
 
-      <BottomNav navigation={navigation} active="profile" />
+      {!kb.visible && <BottomNav navigation={navigation} active="profile" />}
     </View>
   );
 }

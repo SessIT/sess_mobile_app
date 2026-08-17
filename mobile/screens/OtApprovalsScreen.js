@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList,
   ActivityIndicator, RefreshControl, Alert, Modal, TextInput,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -12,12 +12,30 @@ import { GradientHeader, BottomNav, Card, Chip, PrimaryButton } from '../compone
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
-const CUR_MONTH = todayYMD().slice(0, 7);
+const thisMonth = () => todayYMD().slice(0, 7);
+const monthLabel = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 const prettyDate = (iso) =>
   new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const fmtTime = (iso) =>
   new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 const fmtHrs = (h) => (h === Math.floor(h) ? `${h}` : h.toFixed(1)) + 'h';
+const initials = (n) => (n || 'U').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+
+// OT times are entered in 12-hour form (the client asked for AM/PM) but the API
+// only ever sees 24-hour "HH:MM", so every edit round-trips through these.
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const to12parts = (hhmm) => {
+  if (!HHMM.test(hhmm || '')) return { hour: '', minute: '', mer: 'PM' };
+  const h = Number(hhmm.slice(0, 2));
+  return { hour: String(h % 12 === 0 ? 12 : h % 12), minute: hhmm.slice(3), mer: h >= 12 ? 'PM' : 'AM' };
+};
+const to24 = (hour, minute, mer) => {
+  const h = (Number(hour) % 12) + (mer === 'PM' ? 12 : 0); // 12 AM -> 00, 12 PM -> 12
+  return `${String(h).padStart(2, '0')}:${minute.padStart(2, '0')}`;
+};
+const partsOk = (hour, minute) =>
+  /^\d{1,2}$/.test(hour) && /^\d{1,2}$/.test(minute) &&
+  Number(hour) >= 1 && Number(hour) <= 12 && Number(minute) <= 59;
 
 const STATUS_STYLE = {
   pending: { c: COLORS.orange, bg: COLORS.orangeSoft, label: 'Pending' },
@@ -34,18 +52,38 @@ export default function OtApprovalsScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [selected, setSelected] = useState(null); // null = All Employees
+  const [month, setMonth] = useState(thisMonth()); // at mount, not module load — the app outlives the month
+  const [empModal, setEmpModal] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    api('/users').then(setUsers).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const q = filter === 'all' ? '' : `&status=${filter}`;
-      const res = await api(`/ot/requests?month=${CUR_MONTH}${q}`);
+      const who = selected ? `&userId=${selected.id}` : '';
+      const res = await api(`/ot/requests?month=${month}${q}${who}`);
       setRequests(res.requests || []);
-    } catch (e) { Alert.alert('Error', e.message); }
+    } catch (e) { Alert.alert('Error', e.message); setRequests([]); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [filter]);
+  }, [filter, selected, month]);
 
   useEffect(() => { load(); }, [load]);
+
+  const shiftMonth = (n) => {
+    const d = new Date(month + '-01T00:00:00');
+    d.setMonth(d.getMonth() + n);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (ym <= thisMonth()) setMonth(ym);
+  };
+
+  const filteredUsers = users.filter((u) =>
+    (u.username + ' ' + (u.fullName || '')).toLowerCase().includes(search.toLowerCase()));
 
   const decide = (r, status) => {
     const go = async () => {
@@ -82,7 +120,7 @@ export default function OtApprovalsScreen({ navigation }) {
 
       <GradientHeader
         title="OT Approvals"
-        subtitle={`${CUR_MONTH} • ${pendingCount} pending`}
+        subtitle={`${monthLabel(month)} • ${pendingCount} pending`}
         onBack={() => navigation.goBack()}
       >
         <View style={styles.segment}>
@@ -91,6 +129,27 @@ export default function OtApprovalsScreen({ navigation }) {
               <Text style={[styles.segText, filter === f && styles.segTextOn]}>{f[0].toUpperCase() + f.slice(1)}</Text>
             </TouchableOpacity>
           ))}
+        </View>
+
+        <View style={styles.filterRow}>
+          <TouchableOpacity style={[styles.filterField, { flex: 1.2 }]} onPress={() => { setSearch(''); setEmpModal(true); }}>
+            <MaterialIcons name="person" size={17} color="#C7D2FE" />
+            <Text style={styles.filterText} numberOfLines={1}>
+              {selected ? (selected.fullName || selected.username) : 'All Employees'}
+            </Text>
+            <MaterialIcons name="arrow-drop-down" size={22} color="#C7D2FE" />
+          </TouchableOpacity>
+
+          <View style={[styles.filterField, { flex: 1.1, paddingHorizontal: 4 }]}>
+            <TouchableOpacity onPress={() => shiftMonth(-1)} style={{ padding: 4 }}>
+              <MaterialIcons name="chevron-left" size={22} color="#C7D2FE" />
+            </TouchableOpacity>
+            <Text style={[styles.filterText, { textAlign: 'center' }]} numberOfLines={1}>{monthLabel(month)}</Text>
+            <TouchableOpacity onPress={() => shiftMonth(1)} disabled={month >= thisMonth()}
+              style={{ padding: 4, opacity: month >= thisMonth() ? 0.3 : 1 }}>
+              <MaterialIcons name="chevron-right" size={22} color="#C7D2FE" />
+            </TouchableOpacity>
+          </View>
         </View>
       </GradientHeader>
 
@@ -168,6 +227,47 @@ export default function OtApprovalsScreen({ navigation }) {
         </ScrollView>
       )}
 
+      {/* Employee dropdown */}
+      <Modal visible={empModal} transparent animationType="slide" onRequestClose={() => setEmpModal(false)}>
+        <View style={styles.sheetOverlay}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Select Employee</Text>
+            <View style={styles.searchRow}>
+              <MaterialIcons name="search" size={19} color={COLORS.sub} />
+              <TextInput style={styles.searchInput} placeholder="Search…" placeholderTextColor={COLORS.faint}
+                value={search} onChangeText={setSearch} autoFocus />
+            </View>
+            <TouchableOpacity style={[styles.empRow, !selected && styles.empRowActive]}
+              onPress={() => { setSelected(null); setEmpModal(false); }}>
+              <View style={styles.eAvatar}><MaterialIcons name="groups" size={19} color={COLORS.primary} /></View>
+              <Text style={styles.eName}>All Employees</Text>
+              {!selected && <MaterialIcons name="check-circle" size={20} color={COLORS.green} style={{ marginLeft: 'auto' }} />}
+            </TouchableOpacity>
+            <FlatList
+              data={filteredUsers}
+              keyExtractor={(u) => String(u.id)}
+              style={{ maxHeight: 330 }}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item: u }) => (
+                <TouchableOpacity style={[styles.empRow, selected?.id === u.id && styles.empRowActive]}
+                  onPress={() => { setSelected(u); setEmpModal(false); }}>
+                  <View style={styles.eAvatar}><Text style={styles.eAvatarText}>{initials(u.fullName || u.username)}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.eName}>{u.fullName || u.username}</Text>
+                    <Text style={styles.eSub}>@{u.username}</Text>
+                  </View>
+                  {selected?.id === u.id && <MaterialIcons name="check-circle" size={20} color={COLORS.green} />}
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity style={styles.sheetClose} onPress={() => setEmpModal(false)}>
+              <Text style={styles.sheetCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <AddOtModal
         visible={addOpen}
         onClose={() => setAddOpen(false)}
@@ -215,12 +315,11 @@ function AddOtModal({ visible, onClose, onDone }) {
   const allSelected = users.length > 0 && selected.size === users.length;
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(users.map((u) => u.id)));
 
-  const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
   const canSubmit = selected.size > 0 && reason.trim() && !busy;
 
   const submit = async () => {
     if (!HHMM.test(start) || !HHMM.test(end)) {
-      Alert.alert('Invalid time', 'Enter times as HH:MM (24-hour), e.g. 18:30');
+      Alert.alert('Invalid time', 'Enter an hour (1–12), minutes (00–59) and AM/PM for both start and end.');
       return;
     }
     setBusy(true);
@@ -282,18 +381,8 @@ function AddOtModal({ visible, onClose, onDone }) {
             </TouchableOpacity>
 
             <View style={styles.timeRow}>
-              <View style={styles.timeField}>
-                <Text style={styles.dateLabel}>START (HH:MM)</Text>
-                <TextInput style={styles.timeInput} value={start} onChangeText={setStart}
-                  placeholder="18:00" placeholderTextColor={COLORS.faint}
-                  keyboardType="numbers-and-punctuation" maxLength={5} />
-              </View>
-              <View style={styles.timeField}>
-                <Text style={styles.dateLabel}>END (HH:MM)</Text>
-                <TextInput style={styles.timeInput} value={end} onChangeText={setEnd}
-                  placeholder="20:00" placeholderTextColor={COLORS.faint}
-                  keyboardType="numbers-and-punctuation" maxLength={5} />
-              </View>
+              <TimeField12 label="START" value={start} onChange={setStart} />
+              <TimeField12 label="END" value={end} onChange={setEnd} />
             </View>
 
             <Text style={styles.fieldLabel}>OT WORK / REASON *</Text>
@@ -345,6 +434,63 @@ function AddOtModal({ visible, onClose, onDone }) {
   );
 }
 
+/* ---------------- 12-hour time entry (hour · minute · AM/PM) ---------------- */
+// `value` is a 24-hour "HH:MM" string; onChange gets '' while the parts are
+// incomplete so the caller's existing HHMM guards reject a half-typed time.
+function TimeField12({ label, value, onChange }) {
+  const [p, setP] = useState(() => to12parts(value));
+
+  // Re-sync when the value changes from outside (sheet reset).
+  useEffect(() => {
+    if (!HHMM.test(value || '')) return;
+    if (partsOk(p.hour, p.minute) && to24(p.hour, p.minute, p.mer) === value) return;
+    setP(to12parts(value));
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (next) => {
+    setP(next);
+    onChange(partsOk(next.hour, next.minute) ? to24(next.hour, next.minute, next.mer) : '');
+  };
+  const bad = !partsOk(p.hour, p.minute);
+
+  return (
+    <View style={[styles.timeField, bad && styles.timeFieldBad]}>
+      <Text style={styles.dateLabel}>{label}</Text>
+      <View style={styles.timeInputRow}>
+        <TextInput
+          style={styles.timeNum}
+          value={p.hour}
+          onChangeText={(t) => set({ ...p, hour: t.replace(/\D/g, '') })}
+          placeholder="6"
+          placeholderTextColor={COLORS.faint}
+          keyboardType="number-pad"
+          maxLength={2}
+        />
+        <Text style={styles.timeColon}>:</Text>
+        <TextInput
+          style={styles.timeNum}
+          value={p.minute}
+          onChangeText={(t) => set({ ...p, minute: t.replace(/\D/g, '') })}
+          onBlur={() => { if (p.minute.length === 1) set({ ...p, minute: `0${p.minute}` }); }}
+          placeholder="00"
+          placeholderTextColor={COLORS.faint}
+          keyboardType="number-pad"
+          maxLength={2}
+        />
+        <View style={styles.merSeg}>
+          {['AM', 'PM'].map((ap) => (
+            <TouchableOpacity key={ap}
+              style={[styles.merBtn, p.mer === ap && styles.merBtnOn]}
+              onPress={() => set({ ...p, mer: ap })}>
+              <Text style={[styles.merText, p.mer === ap && styles.merTextOn]}>{ap}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
 
@@ -353,6 +499,13 @@ const styles = StyleSheet.create({
   segBtnOn: { backgroundColor: '#fff' },
   segText: { color: '#E0E7FF', fontWeight: '700', fontSize: 11.5 },
   segTextOn: { color: COLORS.primary },
+
+  filterRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  filterField: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.13)',
+    borderRadius: 14, paddingHorizontal: 10, height: 44, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  filterText: { flex: 1, color: '#fff', fontSize: 12.5, fontWeight: '700' },
 
   empty: { alignItems: 'center', paddingVertical: 50, gap: 10 },
   emptyText: { color: COLORS.faint, fontSize: 13 },
@@ -408,7 +561,18 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: COLORS.field, borderWidth: 1.5, borderColor: COLORS.line,
     borderRadius: RADIUS.input, padding: 12,
   },
-  timeInput: { fontSize: 16, fontWeight: '700', color: COLORS.ink, marginTop: 3, padding: 0 },
+  timeFieldBad: { borderColor: '#FCA5A5' },
+  timeInputRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  timeNum: { width: 22, fontSize: 15, fontWeight: '700', color: COLORS.ink, padding: 0, textAlign: 'center' },
+  timeColon: { fontSize: 15, fontWeight: '700', color: COLORS.ink, marginHorizontal: 1 },
+  merSeg: {
+    flexDirection: 'row', marginLeft: 'auto', borderRadius: 8, overflow: 'hidden',
+    borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.field,
+  },
+  merBtn: { paddingHorizontal: 6, paddingVertical: 4 },
+  merBtnOn: { backgroundColor: COLORS.primary },
+  merText: { fontSize: 10, fontWeight: '800', color: COLORS.sub },
+  merTextOn: { color: '#fff' },
 
   reasonInput: {
     backgroundColor: COLORS.field, borderWidth: 1.5, borderColor: COLORS.line, borderRadius: RADIUS.input,
@@ -422,6 +586,24 @@ const styles = StyleSheet.create({
   cancelBtnText: { color: '#374151', fontWeight: '700' },
   submitBtn: { flex: 1, height: 50, borderRadius: 13, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
   submitBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+
+  /* employee filter sheet */
+  searchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.field,
+    borderWidth: 1, borderColor: COLORS.line, borderRadius: RADIUS.input, paddingHorizontal: 12, height: 46, marginBottom: 10,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: COLORS.ink },
+  empRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 12 },
+  empRowActive: { backgroundColor: COLORS.indigoSoft },
+  eAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.indigoSoft, justifyContent: 'center', alignItems: 'center' },
+  eAvatarText: { color: COLORS.primary, fontWeight: '800', fontSize: 13 },
+  eName: { fontSize: 14, fontWeight: '700', color: COLORS.ink },
+  eSub: { fontSize: 11, color: COLORS.faint, marginTop: 1 },
+  sheetClose: {
+    marginTop: 10, height: 52, borderRadius: RADIUS.button, borderWidth: 1.5,
+    borderColor: COLORS.line, justifyContent: 'center', alignItems: 'center',
+  },
+  sheetCloseText: { color: '#374151', fontWeight: '700' },
   overlayCenter: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', padding: 20 },
   calCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 16 },
 });

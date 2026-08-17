@@ -11,6 +11,17 @@ const dateOnly = (ymd) => new Date(ymd + 'T00:00:00.000Z');
 const ymdIST = (d) => new Date(new Date(d).getTime() + 5.5 * 3600000).toISOString().slice(0, 10);
 const intYear = (v) => (/^\d{4}$/.test(String(v || '')) ? Number(v) : Number(ymdIST(new Date()).slice(0, 4)));
 const yearRange = (year) => ({ gte: dateOnly(`${year}-01-01`), lt: dateOnly(`${year + 1}-01-01`) });
+// Optional list filters. Anything unparseable returns null and is ignored — a
+// stray query string must never break an approval list.
+const intOrNull = (v) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; };
+const monthOrNull = (v) => (/^\d{4}-(0[1-9]|1[0-2])$/.test(String(v || '')) ? String(v) : null);
+const monthRange = (month) => {
+  const [y, m] = month.split('-').map(Number);
+  return {
+    gte: dateOnly(`${month}-01`),
+    lt: dateOnly(`${m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`}-01`),
+  };
+};
 
 // A full comp-off day is 9:30 → 18:30 IST on the worked week-off/holiday.
 const REQ_IN = '09:30';
@@ -40,7 +51,10 @@ async function punchSummary(userId, ymd) {
 
 // The worked day must be a Sunday (week-off) or a company holiday.
 async function isWeekoffOrHoliday(ymd) {
-  const wd = new Date(ymd + 'T00:00:00+05:30').getDay();
+  // Zone-immune weekday: parsed at UTC midnight and read back in UTC, matching
+  // leaves.js. A '+05:30' parse plus getDay() would resolve the weekday in the
+  // server's timezone, so a non-IST host would credit comp-off for the wrong day.
+  const wd = new Date(ymd + 'T00:00:00.000Z').getUTCDay();
   if (wd === 0) return { ok: true, kind: 'weekoff' };
   const holiday = await prisma.holiday.findUnique({ where: { date: dateOnly(ymd) } });
   if (holiday) return { ok: true, kind: 'holiday', name: holiday.name };
@@ -152,13 +166,18 @@ router.delete('/requests/:id', async (req, res) => {
 
 /* ==================== ADMIN ==================== */
 
-// GET /api/compoff/requests?status=&year= (admin) — all requests with punch records
+// GET /api/compoff/requests?status=&year=&userId=&month=YYYY-MM (admin) — all
+// requests with punch records. A month narrows to that month's worked days and
+// stands in for the year window (it already carries its own year).
 router.get('/requests', requireRole(ADMIN), async (req, res) => {
   try {
     const year = intYear(req.query.year);
-    const where = { workDate: yearRange(year) };
+    const month = monthOrNull(req.query.month);
+    const where = { workDate: month ? monthRange(month) : yearRange(year) };
     if (['pending', 'approved', 'rejected', 'cancelled', 'revoked'].includes(req.query.status))
       where.status = req.query.status;
+    const userId = intOrNull(req.query.userId);
+    if (userId) where.userId = userId;
     const rows = await prisma.compOffRequest.findMany({
       where,
       orderBy: [{ status: 'asc' }, { workDate: 'desc' }],
