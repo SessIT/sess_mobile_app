@@ -202,13 +202,27 @@ export default function LoginScreen({ navigation }) {
     setError(null);
     if (!username.trim() || !password) { setError('Enter username and password'); return; }
     setBusy(true);
+    let answered = false; // did the server actually reply to the login POST?
     try {
       const data = await api('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ username: username.trim(), password }),
       });
+      answered = true; // credentials accepted; a later failure is not a rejection
       await finishLogin(data);
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      setError(e.message);
+      // Only blank the form when the server actually refused the credentials —
+      // a 401. A dropped connection carries no status, and a 500 means the
+      // password was never judged; wiping on either would make an admin retype
+      // a password that was never wrong.
+      const refused = !answered && e?.status === 401;
+      if (refused) {
+        setUsername('');
+        setPassword('');
+        setShowPass(false);
+      }
+    }
     finally { setBusy(false); }
   };
 

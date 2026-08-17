@@ -18,6 +18,22 @@ const fmtTime = (iso) =>
   new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 const fmtHrs = (h) => (h === Math.floor(h) ? `${h}` : h.toFixed(1)) + 'h';
 
+// OT times are entered in 12-hour form (the client asked for AM/PM) but the API
+// only ever sees 24-hour "HH:MM", so every edit round-trips through these.
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const to12parts = (hhmm) => {
+  if (!HHMM.test(hhmm || '')) return { hour: '', minute: '', mer: 'PM' };
+  const h = Number(hhmm.slice(0, 2));
+  return { hour: String(h % 12 === 0 ? 12 : h % 12), minute: hhmm.slice(3), mer: h >= 12 ? 'PM' : 'AM' };
+};
+const to24 = (hour, minute, mer) => {
+  const h = (Number(hour) % 12) + (mer === 'PM' ? 12 : 0); // 12 AM -> 00, 12 PM -> 12
+  return `${String(h).padStart(2, '0')}:${minute.padStart(2, '0')}`;
+};
+const partsOk = (hour, minute) =>
+  /^\d{1,2}$/.test(hour) && /^\d{1,2}$/.test(minute) &&
+  Number(hour) >= 1 && Number(hour) <= 12 && Number(minute) <= 59;
+
 const STATUS_STYLE = {
   pending: { c: COLORS.orange, soft: COLORS.orangeSoft, label: 'Pending' },
   approved: { c: COLORS.green, soft: COLORS.greenSoft, label: 'Approved' },
@@ -213,8 +229,6 @@ function RequestOtModal({ visible, onClose, onDone }) {
     }
   }, [visible]);
 
-  const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
-
   const hoursPreview = (() => {
     if (!HHMM.test(start) || !HHMM.test(end)) return null;
     const s = Number(start.slice(0, 2)) * 60 + Number(start.slice(3));
@@ -225,7 +239,7 @@ function RequestOtModal({ visible, onClose, onDone }) {
 
   const submit = async () => {
     if (!HHMM.test(start) || !HHMM.test(end)) {
-      Alert.alert('Invalid time', 'Enter times as HH:MM (24-hour), e.g. 18:30');
+      Alert.alert('Invalid time', 'Enter an hour (1–12), minutes (00–59) and AM/PM for both start and end.');
       return;
     }
     if (!reason.trim()) {
@@ -277,30 +291,8 @@ function RequestOtModal({ visible, onClose, onDone }) {
             </View>
 
             <View style={styles.timeRow}>
-              <View style={styles.timeField}>
-                <Text style={styles.dateLabel}>START (HH:MM)</Text>
-                <TextInput
-                  style={styles.timeInput}
-                  value={start}
-                  onChangeText={setStart}
-                  placeholder="18:00"
-                  placeholderTextColor={COLORS.faint}
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={5}
-                />
-              </View>
-              <View style={styles.timeField}>
-                <Text style={styles.dateLabel}>END (HH:MM)</Text>
-                <TextInput
-                  style={styles.timeInput}
-                  value={end}
-                  onChangeText={setEnd}
-                  placeholder="20:00"
-                  placeholderTextColor={COLORS.faint}
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={5}
-                />
-              </View>
+              <TimeField12 label="START" value={start} onChange={setStart} />
+              <TimeField12 label="END" value={end} onChange={setEnd} />
             </View>
             {hoursPreview != null && (
               <View style={styles.hoursPill}>
@@ -354,6 +346,63 @@ function RequestOtModal({ visible, onClose, onDone }) {
         </View>
       </Modal>
     </Modal>
+  );
+}
+
+/* ---------------- 12-hour time entry (hour · minute · AM/PM) ---------------- */
+// `value` is a 24-hour "HH:MM" string; onChange gets '' while the parts are
+// incomplete so the caller's existing HHMM guards reject a half-typed time.
+function TimeField12({ label, value, onChange }) {
+  const [p, setP] = useState(() => to12parts(value));
+
+  // Re-sync when the value changes from outside (quick picks, sheet reset).
+  useEffect(() => {
+    if (!HHMM.test(value || '')) return;
+    if (partsOk(p.hour, p.minute) && to24(p.hour, p.minute, p.mer) === value) return;
+    setP(to12parts(value));
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (next) => {
+    setP(next);
+    onChange(partsOk(next.hour, next.minute) ? to24(next.hour, next.minute, next.mer) : '');
+  };
+  const bad = !partsOk(p.hour, p.minute);
+
+  return (
+    <View style={[styles.timeField, bad && styles.timeFieldBad]}>
+      <Text style={styles.dateLabel}>{label}</Text>
+      <View style={styles.timeInputRow}>
+        <TextInput
+          style={styles.timeNum}
+          value={p.hour}
+          onChangeText={(t) => set({ ...p, hour: t.replace(/\D/g, '') })}
+          placeholder="6"
+          placeholderTextColor={COLORS.faint}
+          keyboardType="number-pad"
+          maxLength={2}
+        />
+        <Text style={styles.timeColon}>:</Text>
+        <TextInput
+          style={styles.timeNum}
+          value={p.minute}
+          onChangeText={(t) => set({ ...p, minute: t.replace(/\D/g, '') })}
+          onBlur={() => { if (p.minute.length === 1) set({ ...p, minute: `0${p.minute}` }); }}
+          placeholder="00"
+          placeholderTextColor={COLORS.faint}
+          keyboardType="number-pad"
+          maxLength={2}
+        />
+        <View style={styles.merSeg}>
+          {['AM', 'PM'].map((ap) => (
+            <TouchableOpacity key={ap}
+              style={[styles.merBtn, p.mer === ap && styles.merBtnOn]}
+              onPress={() => set({ ...p, mer: ap })}>
+              <Text style={[styles.merText, p.mer === ap && styles.merTextOn]}>{ap}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -416,7 +465,18 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: COLORS.field, borderWidth: 1.5, borderColor: COLORS.line,
     borderRadius: RADIUS.input, padding: 12,
   },
-  timeInput: { fontSize: 16, fontWeight: '700', color: COLORS.ink, marginTop: 3, padding: 0 },
+  timeFieldBad: { borderColor: '#FCA5A5' },
+  timeInputRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  timeNum: { width: 22, fontSize: 15, fontWeight: '700', color: COLORS.ink, padding: 0, textAlign: 'center' },
+  timeColon: { fontSize: 15, fontWeight: '700', color: COLORS.ink, marginHorizontal: 1 },
+  merSeg: {
+    flexDirection: 'row', marginLeft: 'auto', borderRadius: 8, overflow: 'hidden',
+    borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.field,
+  },
+  merBtn: { paddingHorizontal: 6, paddingVertical: 4 },
+  merBtnOn: { backgroundColor: COLORS.primary },
+  merText: { fontSize: 10, fontWeight: '800', color: COLORS.sub },
+  merTextOn: { color: '#fff' },
   hoursPill: {
     flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start',
     backgroundColor: COLORS.indigoSoft, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, marginTop: 10,

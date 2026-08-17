@@ -11,6 +11,8 @@ import { api } from '../lib/api';
 
 const initials = (n) => (n || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /* Labeled input row: small gray label + icon + control in a soft-gray field. */
 const Field = ({ icon, label, error, children }) => (
   <View style={{ marginBottom: 12 }}>
@@ -28,6 +30,7 @@ export default function EditUserScreen({ route, navigation }) {
   const editing = route.params?.user || {};
   const [username, setUsername] = useState(editing.username || '');
   const [fullName, setFullName] = useState(editing.fullName || '');
+  const [email, setEmail] = useState(editing.email || '');
   const [phone, setPhone] = useState(editing.phone || '');
   const [password, setPassword] = useState('');   // blank = keep current
   const [confirm, setConfirm] = useState('');
@@ -45,6 +48,7 @@ export default function EditUserScreen({ route, navigation }) {
     const e = {};
     if (!username.trim()) e.username = 'Username is required';
     else if (/\s/.test(username.trim())) e.username = 'No spaces allowed';
+    if (email.trim() && !EMAIL_RE.test(email.trim())) e.email = 'Enter a valid email address';
     if (phone && phone.length !== 10) e.phone = '10-digit mobile number required';
     if (password && password.length < 6) e.password = 'Minimum 6 characters';
     if (password && confirm !== password) e.confirm = 'Passwords do not match';
@@ -64,6 +68,9 @@ export default function EditUserScreen({ route, navigation }) {
         roleName,
       };
       if (password) body.password = password; // only send when resetting
+      // Only touch email when it actually changed — '' is a deliberate "clear it" on the server.
+      const mail = email.trim().toLowerCase();
+      if (mail !== (editing.email || '').trim().toLowerCase()) body.email = mail;
       const user = await api(`/users/${editing.id}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
@@ -105,6 +112,18 @@ export default function EditUserScreen({ route, navigation }) {
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
           <SectionLabel text="ACCOUNT" style={{ marginTop: 0 }} />
           <Card>
+            {/* Server-allocated — shown for reference, never editable. */}
+            <View style={{ marginBottom: 12 }}>
+              <Text style={styles.fieldLabel}>Employee ID</Text>
+              <View style={[styles.inputRow, { backgroundColor: COLORS.bg }]}>
+                <MaterialIcons name="badge" size={19} color={COLORS.faint} style={{ marginRight: 9 }} />
+                <Text style={[styles.input, { color: COLORS.sub, fontWeight: '700' }]}>
+                  {editing.employeeId || '—'}
+                </Text>
+                <MaterialIcons name="lock" size={15} color={COLORS.faint} />
+              </View>
+            </View>
+
             <Field icon="alternate-email" label="Username *" error={errors.username}>
               <TextInput style={styles.input} placeholder="username" placeholderTextColor={COLORS.faint}
                 autoCapitalize="none" autoCorrect={false} value={username} onChangeText={setUsername} />
@@ -117,7 +136,14 @@ export default function EditUserScreen({ route, navigation }) {
 
           <SectionLabel text="CONTACT" />
           <Card>
-            <Text style={styles.fieldLabel}>Mobile (OTP login)</Text>
+            <Field icon="mail" label="Email" error={errors.email}>
+              <TextInput style={styles.input} placeholder="name@company.com" placeholderTextColor={COLORS.faint}
+                keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+                value={email} onChangeText={setEmail} />
+            </Field>
+            <Text style={styles.cardHint}>Employees log in with this email. Clearing it stops them logging in.</Text>
+
+            <Text style={styles.fieldLabel}>Mobile (optional)</Text>
             <View style={[styles.inputRow, errors.phone && { borderColor: '#FCA5A5', backgroundColor: COLORS.redSoft }]}>
               <View style={styles.ccChip}><Text style={styles.ccText}>+91</Text></View>
               <TextInput

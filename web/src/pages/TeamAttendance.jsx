@@ -46,6 +46,7 @@ import {
   IconPlus,
   IconLeave,
   IconDownload,
+  IconGift,
 } from '../components/icons';
 
 /* Time helpers for the manual-entry editor — everything is IST (+05:30). */
@@ -71,10 +72,15 @@ function StatusBadge({ status }) {
     leave: { tone: 'blue', label: 'Paid Leave' },
     absent: { tone: 'red', label: 'Absent' },
     weekoff: { tone: 'slate', label: 'Week off' },
+    // A company holiday is a non-working day like a week off, so it stays in the
+    // muted family (never red). Badge only ships six tones and the coloured ones
+    // are taken by present/late/leave/absent, so the gift icon — the same one the
+    // Holidays page uses — is what keeps it apart from "Week off".
+    holiday: { tone: 'gray', label: 'Holiday', icon: <IconGift className="h-3 w-3" /> },
     future: { tone: 'gray', label: '—' },
   };
-  const { tone, label } = map[status] || { tone: 'slate', label: status || '—' };
-  return <Badge tone={tone}>{label}</Badge>;
+  const { tone, label, icon } = map[status] || { tone: 'slate', label: status || '—' };
+  return <Badge tone={tone}>{icon}{label}</Badge>;
 }
 
 // Badge that reflects lateness level for a present row.
@@ -206,6 +212,19 @@ function MonthUserDetail({ month, user, onBack }) {
   const stats = data?.stats;
   const days = data?.days || [];
   const userName = user.fullName || user.username;
+  // Holidays are excluded from workingDaysSoFar (that is what lowers Required),
+  // so the count rides along in the Required tile's sub-line — the stat row is a
+  // fixed 7-up grid on lg and an eighth tile would orphan onto a second row.
+  // stats.holiday is month-wide by design, but Required only covers elapsed days,
+  // so mirror the server's exclusion rule instead: a holiday lowers Required when
+  // it is elapsed and not a Sunday (already a week-off, never subtracted twice),
+  // and holidayName survives even when a punch or a leave wins the day's status.
+  const today = todayIST();
+  const holidayCount = days.filter((d) => d.holidayName && d.weekday !== 0 && d.date <= today).length;
+  const requiredSub = [
+    data?.hoursPerDay ? `${data.hoursPerDay} h/day` : null,
+    holidayCount ? `${holidayCount} holiday${holidayCount === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' · ');
 
   // Click a day to fix its punches. Future days aren't editable.
   const openDay = (d) => {
@@ -236,7 +255,7 @@ function MonthUserDetail({ month, user, onBack }) {
             <MiniStat label="Leave" value={stats.leave ?? 0} tone="blue" icon={<IconLeave className="h-4 w-4" />} />
             <MiniStat label="Absent" value={stats.absent} tone="red" icon={<IconBan className="h-4 w-4" />} />
             <MiniStat label="Late" value={stats.late} tone="amber" icon={<IconClock className="h-4 w-4" />} />
-            <MiniStat label="Required" value={fmtHours(data.requiredHours)} sub={data.hoursPerDay ? `${data.hoursPerDay} h/day` : ''} tone="slate" icon={<IconCalendar className="h-4 w-4" />} />
+            <MiniStat label="Required" value={fmtHours(data.requiredHours)} sub={requiredSub} tone="slate" icon={<IconCalendar className="h-4 w-4" />} />
             <MiniStat label="Worked" value={fmtHours(stats.hours)} tone="blue" icon={<IconTimer className="h-4 w-4" />} />
             <MiniStat label="OT" value={fmtHours(stats.otHours || 0)} sub="approved overtime" tone="blue" icon={<IconClock className="h-4 w-4" />} />
           </div>
@@ -283,6 +302,13 @@ function MonthUserDetail({ month, user, onBack }) {
                               <LateBadge late={d.late} lateLevel={d.lateLevel} />
                             ) : (
                               <StatusBadge status={d.status} />
+                            )}
+                            {/* Name the holiday — also shown when someone worked
+                                it, so a lone 'Present' row on a holiday reads. */}
+                            {d.holidayName && (
+                              <span className="truncate text-xs text-slate-400" title={d.holidayName}>
+                                {d.holidayName}
+                              </span>
                             )}
                           </div>
                         </td>
@@ -603,6 +629,27 @@ function DayTab() {
         </Button>
       </div>
 
+      {/* Company holiday callout — explains an empty day before the admin reads
+          the numbers below. Same tinted-card pattern as the absentees card. */}
+      {!sumLoading && !sumError && summary?.holiday && (
+        <Card className="border-brand-200 bg-brand-50">
+          <CardBody className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-brand-700">
+              <IconGift className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">
+                Company holiday · {summary.holiday.name}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {fmtDate(summary.holiday.date)} — nobody is expected to punch in. Anyone listed below
+                worked the holiday.
+              </p>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
       {/* Day-level stat cards */}
       {sumLoading && (
         <Card>
@@ -621,7 +668,14 @@ function DayTab() {
             tone="amber"
             icon={<IconClock className="h-5 w-5" />}
           />
-          <StatCard label="Absent" value={summary.absent?.length ?? 0} tone="red" icon={<IconBan className="h-5 w-5" />} />
+          {/* On a company holiday nobody is absent — they are simply off, so the
+              tile drops the alarming red and says why. */}
+          <StatCard
+            label={summary.holiday ? 'Off (holiday)' : 'Absent'}
+            value={summary.absent?.length ?? 0}
+            tone={summary.holiday ? 'slate' : 'red'}
+            icon={summary.holiday ? <IconGift className="h-5 w-5" /> : <IconBan className="h-5 w-5" />}
+          />
           <StatCard label="Total staff" value={summary.totalUsers ?? 0} tone="blue" icon={<IconUsers className="h-5 w-5" />} />
         </div>
       )}
@@ -642,7 +696,11 @@ function DayTab() {
         {!sesLoading && !sesError && grouped.length === 0 && (
           <Card>
             <CardBody>
-              <EmptyState title="No punches on this day" hint="Nobody punched in." icon={<IconInbox />} />
+              <EmptyState
+                title="No punches on this day"
+                hint={summary?.holiday ? 'Company holiday — no punches expected.' : 'Nobody punched in.'}
+                icon={<IconInbox />}
+              />
             </CardBody>
           </Card>
         )}
@@ -683,7 +741,7 @@ function DayTab() {
         <Card className="border-slate-200 bg-slate-50">
           <CardBody>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
-              Absent · {absent.length}
+              {summary?.holiday ? 'Off for the holiday' : 'Absent'} · {absent.length}
             </h2>
             <div className="flex flex-wrap gap-2">
               {absent.map((u) => (

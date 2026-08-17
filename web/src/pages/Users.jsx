@@ -301,8 +301,8 @@ function ProfileFields({ form, set, managers, selfId }) {
   return (
     <>
       <SectionTitle>Employment</SectionTitle>
-      <Field label="Employee ID">
-        <Input value={form.employeeId} onChange={(e) => set('employeeId', e.target.value)} placeholder="SESS-014" />
+      <Field label="Employee ID" hint="Leave blank on create — the next ID (SESS-001, SESS-002…) is assigned automatically.">
+        <Input value={form.employeeId} onChange={(e) => set('employeeId', e.target.value)} placeholder="Auto (e.g. SESS-014)" />
       </Field>
       <Field label="Date of joining">
         <Input type="date" value={form.dateOfJoining} onChange={(e) => set('dateOfJoining', e.target.value)} />

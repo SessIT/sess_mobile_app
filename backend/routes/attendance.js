@@ -260,18 +260,32 @@ async function approvedLeaveSets(month, userIds) {
   return sets;
 }
 
+// Company holidays in a date range (inclusive): Map('YYYY-MM-DD' -> name).
+// Holidays are stored date-only at UTC midnight, so they are compared as plain
+// 'YYYY-MM-DD' strings — exactly the way leaves.js countLeaveDays() does. Do NOT
+// push them through the IST offset; that would shift them a day.
+// One query per request: never call this inside a day loop.
+async function holidayMap(startYmd, endYmd = startYmd) {
+  const rows = await prisma.holiday.findMany({
+    where: { date: { gte: dateOnlyUTC(startYmd), lte: dateOnlyUTC(endYmd) } },
+    select: { date: true, name: true },
+  });
+  return new Map(rows.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name]));
+}
+
 // GET /api/attendance/admin/day?date=YYYY-MM-DD — that day, ALL employees
 router.get('/admin/day', requireRole(ADMIN), async (req, res) => {
   try {
     const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : ymdIST(new Date());
     const { start, end } = dayWindowIST(dateStr);
-    const [sessions, allUsers] = await Promise.all([
+    const [sessions, allUsers, holidays] = await Promise.all([
       prisma.attendanceSession.findMany({
         where: { punchInTime: { gte: start, lt: end } },
         orderBy: { punchInTime: 'asc' },
         include: { user: { select: { id: true, username: true, fullName: true } } },
       }),
       prisma.user.findMany({ where: { isActive: true }, select: { id: true, username: true, fullName: true } }),
+      holidayMap(dateStr),
     ]);
     const byUser = {};
     for (const s of sessions) {
@@ -291,7 +305,14 @@ router.get('/admin/day', requireRole(ADMIN), async (req, res) => {
     });
     const ids = new Set(present.map(p => p.userId));
     const absent = allUsers.filter(u => !ids.has(u.id));
-    res.json({ date: dateStr, present, absent, totalUsers: allUsers.length });
+    // `absent` deliberately still lists everyone who did not punch on a company
+    // holiday — the CSV export and the counts depend on that membership. The
+    // `holiday` field lets the UI label the day instead.
+    const holidayName = holidays.get(dateStr) || null;
+    res.json({
+      date: dateStr, present, absent, totalUsers: allUsers.length,
+      holiday: holidayName ? { date: dateStr, name: holidayName } : null,
+    });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -312,15 +333,32 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
     if (userId) where.userId = userId;
     const sessions = await prisma.attendanceSession.findMany({ where, orderBy: { punchInTime: 'asc' } });
 
+    const monthStart = `${month}-01`;
+    const monthEnd = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+    const holidays = await holidayMap(monthStart, monthEnd);
+
     let workingDaysSoFar = 0;
+    // The actual day keys behind workingDaysSoFar, so a punch can be tested for
+    // membership instead of just counted (see `absent` below).
+    const workingDaySet = new Set();
     const dayMeta = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const ymd = `${month}-${String(d).padStart(2, '0')}`;
-      const wd = new Date(ymd + 'T00:00:00+05:30').getDay();
+      // Weekday of a calendar day, not of an instant: parse at UTC midnight and read
+      // it back in UTC, the same zone-immune form leaves.js uses. Parsing '+05:30'
+      // and calling getDay() would return the weekday in the SERVER's timezone, so a
+      // UTC host would shift every Sunday to Monday.
+      const wd = new Date(ymd + 'T00:00:00.000Z').getUTCDay();
       const isWeekoff = wd === 0; // Sunday
       const isFuture = ymd > todayStr;
-      if (!isWeekoff && !isFuture) workingDaysSoFar++;
-      dayMeta.push({ ymd, weekday: wd, isWeekoff, isFuture });
+      // The name is kept even when a higher-precedence status wins (a worked
+      // holiday, or one landing on a Sunday) so the UI can still label the day.
+      const holidayName = holidays.get(ymd) || null;
+      // A company holiday is a paid non-working day, like a Sunday. Excluding it
+      // here is what keeps requiredHours correct. A holiday on a Sunday is
+      // already excluded by isWeekoff, so it is never subtracted twice.
+      if (!isWeekoff && !isFuture && !holidayName) { workingDaysSoFar++; workingDaySet.add(ymd); }
+      dayMeta.push({ ymd, weekday: wd, isWeekoff, isFuture, holidayName });
     }
 
     // Approved OT hours in the month, per user (shown as the OT column).
@@ -357,18 +395,29 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
       const summary = Object.values(map).map(r => {
         // Approved-leave days that fell on a working day up to today and weren't
         // actually worked (a punch on a leave day counts as present, not leave).
+        // Company holidays are skipped: they are not working days and leaves.js
+        // countLeaveDays() does not charge a leave day for them either.
         let leave = 0;
         for (const ymd of (leaveSets.get(r.userId) || [])) {
-          if (ymd <= todayStr && !r.days.has(ymd)) leave++;
+          if (ymd <= todayStr && !r.days.has(ymd) && !holidays.has(ymd)) leave++;
         }
+        // Only punches that land ON a working day can cancel out an absence.
+        // r.days holds every punched day, including week-offs and holidays, which
+        // workingDaysSoFar excludes — subtracting it whole would forgive absences
+        // for someone whose only punch was on a Sunday or a company holiday.
+        let workedWorkingDays = 0;
+        for (const ymd of r.days) if (workingDaySet.has(ymd)) workedWorkingDays++;
         // Present = on-time days; late is its own bucket; leave is paid time off.
-        // present + late + leave + absent === workingDaysSoFar.
+        // present + late + leave + absent === workingDaysSoFar + the days punched
+        // on a week-off or holiday: those are genuinely present (and are what a
+        // comp-off claim rests on) yet add no working day, so the left side runs
+        // above workingDaysSoFar by exactly that many.
         const required = Math.max(workingDaysSoFar - leave, 0) * HOURS_PER_DAY;
         return {
           userId: r.userId, username: r.username, fullName: r.fullName,
           present: Math.max(r.days.size - r.late, 0),
           leave,
-          absent: Math.max(workingDaysSoFar - r.days.size - leave, 0),
+          absent: Math.max(workingDaysSoFar - workedWorkingDays - leave, 0),
           late: r.late,
           hours: Math.round(r.hours * 100) / 100,
           otHours: otByUser.get(r.userId) || 0, // approved overtime this month
@@ -395,16 +444,20 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
     const days = dayMeta.map(dm => {
       const rec = byDay[dm.ymd];
       const isLeave = leaveSet.has(dm.ymd);
-      // Precedence: a real punch wins; Sundays are week-off; otherwise approved
-      // leave (incl. upcoming) shows as paid leave before falling back to future/absent.
+      // Precedence: a real punch wins (working a holiday is legitimate — that is
+      // what comp-off is for); Sundays are week-off; a company holiday beats
+      // approved leave, matching leaves.js countLeaveDays(), which does not
+      // charge a leave day for it; otherwise approved leave (incl. upcoming)
+      // shows as paid leave before falling back to future/absent.
       const status = rec ? 'present'
         : dm.isWeekoff ? 'weekoff'
+        : dm.holidayName ? 'holiday'
         : isLeave ? 'leave'
         : dm.isFuture ? 'future'
         : 'absent';
       const lateLevel = rec ? lateLevelOf(rec.firstIn) : null;
       return {
-        date: dm.ymd, weekday: dm.weekday, status,
+        date: dm.ymd, weekday: dm.weekday, status, holidayName: dm.holidayName,
         sessions: rec?.sessions || 0,
         firstIn: rec?.firstIn || null, lastOut: rec?.lastOut || null,
         hours: rec ? Math.round(rec.hours * 100) / 100 : 0,
@@ -413,11 +466,15 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
     });
     const leaveSoFar = days.filter(d => d.status === 'leave' && d.date <= todayStr).length;
     const stats = {
-      // present + late + leave + absent === workingDaysSoFar.
+      // present + late + leave + absent === workingDaysSoFar + the days punched on
+      // a week-off or holiday. Those days are genuinely present but are not working
+      // days, so they lift the left side above workingDaysSoFar rather than fitting
+      // inside it (long true of a worked Sunday; now also of a worked holiday).
       present: days.filter(d => d.status === 'present' && !d.late).length,
       leave: leaveSoFar,
       absent: days.filter(d => d.status === 'absent').length,
       late: days.filter(d => d.late).length,
+      holiday: days.filter(d => d.status === 'holiday').length,
       hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
       otHours: otByUser.get(userId) || 0,
     };
@@ -479,23 +536,37 @@ router.get('/my-month', async (req, res) => {
 
     let workingDaysSoFar = 0;
     const leaveSet = (await approvedLeaveSets(month, [req.user.sub])).get(req.user.sub) || new Set();
+    const holidays = await holidayMap(`${month}-01`, `${month}-${String(daysInMonth).padStart(2, '0')}`);
     const days = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const ymd = `${month}-${String(d).padStart(2, '0')}`;
-      const wd = new Date(ymd + 'T00:00:00+05:30').getDay();
+      // Zone-immune weekday (see /admin/month): a '+05:30' parse read through
+      // getDay() would follow the server's timezone, not the IST calendar.
+      const wd = new Date(ymd + 'T00:00:00.000Z').getUTCDay();
       const isWeekoff = wd === 0; // Sunday is the weekly off
       const isFuture = ymd > todayStr;
-      if (!isWeekoff && !isFuture) workingDaysSoFar++;
+      // Kept even when a higher-precedence status wins (a worked holiday, or one
+      // landing on a Sunday) so the UI can still label the day.
+      const holidayName = holidays.get(ymd) || null;
+      // A company holiday is a paid non-working day, like a Sunday — excluding it
+      // is what corrects requiredHours. A holiday on a Sunday is already excluded
+      // by isWeekoff, so it is never subtracted twice.
+      if (!isWeekoff && !isFuture && !holidayName) workingDaysSoFar++;
       const rec = byDay[ymd];
       const isLeave = leaveSet.has(ymd);
+      // Precedence: a real punch wins (working a holiday is legitimate — that is
+      // what comp-off is for); Sunday is the week-off; a company holiday beats
+      // approved leave, matching leaves.js countLeaveDays(), which does not
+      // charge a leave day for it; then leave, future, absent.
       const status = rec ? 'present'
         : isWeekoff ? 'weekoff'
+        : holidayName ? 'holiday'
         : isLeave ? 'leave'
         : isFuture ? 'future'
         : 'absent';
       const lateLevel = rec ? lateLevelOf(rec.firstIn) : null;
       days.push({
-        date: ymd, weekday: wd, status,
+        date: ymd, weekday: wd, status, holidayName,
         sessions: rec?.sessions || 0,
         firstIn: rec?.firstIn || null, lastOut: rec?.lastOut || null,
         hours: rec ? Math.round(rec.hours * 100) / 100 : 0,
@@ -509,6 +580,7 @@ router.get('/my-month', async (req, res) => {
       leave: leaveSoFar,
       absent: days.filter(d => d.status === 'absent').length,
       weekoff: days.filter(d => d.status === 'weekoff').length,
+      holiday: days.filter(d => d.status === 'holiday').length,
       hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
     };
     res.json({
@@ -525,11 +597,20 @@ router.get('/my-day', async (req, res) => {
   try {
     const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : ymdIST(new Date());
     const { start, end } = dayWindowIST(dateStr);
-    const sessions = await prisma.attendanceSession.findMany({
-      where: { userId: req.user.sub, punchInTime: { gte: start, lt: end } },
-      orderBy: { punchInTime: 'asc' },
+    const [sessions, holidays] = await Promise.all([
+      prisma.attendanceSession.findMany({
+        where: { userId: req.user.sub, punchInTime: { gte: start, lt: end } },
+        orderBy: { punchInTime: 'asc' },
+      }),
+      holidayMap(dateStr),
+    ]);
+    // No day status here (this is a raw session list), but the day card needs to
+    // label a company holiday — same shape as /admin/day.
+    const holidayName = holidays.get(dateStr) || null;
+    res.json({
+      date: dateStr, sessions,
+      holiday: holidayName ? { date: dateStr, name: holidayName } : null,
     });
-    res.json({ date: dateStr, sessions });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 

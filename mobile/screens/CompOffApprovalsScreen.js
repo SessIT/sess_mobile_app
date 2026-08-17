@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, RefreshControl, Alert,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList,
+  ActivityIndicator, RefreshControl, Modal, TextInput, Alert,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -16,6 +16,9 @@ const prettyDate = (iso) =>
   new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const fmtTime = (iso) =>
   new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+const thisMonth = () => todayYMD().slice(0, 7);
+const monthLabel = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+const initials = (n) => (n || 'U').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
 const STATUS_STYLE = {
   pending: { c: COLORS.orange, bg: COLORS.orangeSoft, label: 'Pending' },
@@ -66,18 +69,42 @@ export default function CompOffApprovalsScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [selected, setSelected] = useState(null); // null = All Employees
+  const [month, setMonth] = useState(null);       // null = the whole year
+  const [empModal, setEmpModal] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    api('/users').then(setUsers).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const q = filter === 'all' ? '' : `&status=${filter}`;
-      const res = await api(`/compoff/requests?year=${CUR_YEAR}${q}`);
+      // The year stays in step with the chosen month so stepping back past
+      // January keeps returning that month's requests.
+      const qs = [`year=${month ? month.slice(0, 4) : CUR_YEAR}`];
+      if (filter !== 'all') qs.push(`status=${filter}`);
+      if (selected) qs.push(`userId=${selected.id}`);
+      if (month) qs.push(`month=${month}`);
+      const res = await api(`/compoff/requests?${qs.join('&')}`);
       setRequests(res.requests || []);
-    } catch (e) { Alert.alert('Error', e.message); }
+    } catch (e) { Alert.alert('Error', e.message); setRequests([]); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [filter]);
+  }, [filter, selected, month]);
 
   useEffect(() => { load(); }, [load]);
+
+  // From "All Months" either arrow lands on the current month rather than
+  // jumping to a period the reviewer never chose.
+  const shiftMonth = (n) => {
+    if (!month) { setMonth(thisMonth()); return; }
+    const d = new Date(month + '-01T00:00:00');
+    d.setMonth(d.getMonth() + n);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (ym <= thisMonth()) setMonth(ym);
+  };
 
   const decide = (r, status) => {
     const who = r.user?.fullName || r.user?.username;
@@ -134,6 +161,10 @@ export default function CompOffApprovalsScreen({ navigation }) {
   };
 
   const pendingCount = requests.filter((r) => r.status === 'pending').length;
+  const hasFilters = !!selected || !!month;
+  const clearFilters = () => { setSelected(null); setMonth(null); };
+  const filteredUsers = users.filter((u) =>
+    (u.username + ' ' + (u.fullName || '')).toLowerCase().includes(search.toLowerCase()));
 
   return (
     <View style={styles.container}>
@@ -141,7 +172,7 @@ export default function CompOffApprovalsScreen({ navigation }) {
 
       <GradientHeader
         title="Comp-Off Approvals"
-        subtitle={`${CUR_YEAR} • ${pendingCount} pending`}
+        subtitle={`${month ? monthLabel(month) : CUR_YEAR} • ${pendingCount} pending`}
         onBack={() => navigation.goBack()}
       >
         <View style={styles.segment}>
@@ -151,6 +182,42 @@ export default function CompOffApprovalsScreen({ navigation }) {
             </TouchableOpacity>
           ))}
         </View>
+
+        <View style={styles.filterRow}>
+          <TouchableOpacity style={[styles.filterField, { flex: 1.2 }]} onPress={() => { setSearch(''); setEmpModal(true); }}>
+            <MaterialIcons name="person" size={17} color="#C7D2FE" />
+            <Text style={styles.filterText} numberOfLines={1}>
+              {selected ? (selected.fullName || selected.username) : 'All Employees'}
+            </Text>
+            <MaterialIcons name="arrow-drop-down" size={22} color="#C7D2FE" />
+          </TouchableOpacity>
+
+          <View style={[styles.filterField, { flex: 1.1, paddingHorizontal: 4 }]}>
+            <TouchableOpacity onPress={() => shiftMonth(-1)} style={{ padding: 4 }}>
+              <MaterialIcons name="chevron-left" size={22} color="#C7D2FE" />
+            </TouchableOpacity>
+            <TouchableOpacity style={{ flex: 1 }} onPress={() => setMonth(month ? null : thisMonth())}>
+              {/* Not "All Months": the endpoint always scopes to one year, so with
+                  no month picked this really is every month of CUR_YEAR only. */}
+              <Text style={[styles.filterText, { textAlign: 'center' }]} numberOfLines={1}>
+                {month ? monthLabel(month) : `All of ${CUR_YEAR}`}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => shiftMonth(1)} disabled={month >= thisMonth()}
+              style={{ padding: 4, opacity: month >= thisMonth() ? 0.3 : 1 }}>
+              <MaterialIcons name="chevron-right" size={22} color="#C7D2FE" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {hasFilters && (
+          <View style={styles.clearRow}>
+            <TouchableOpacity style={styles.clearBtn} onPress={clearFilters}>
+              <MaterialIcons name="close" size={13} color="#C7D2FE" />
+              <Text style={styles.clearText}>Clear filters</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </GradientHeader>
 
       {loading ? (
@@ -166,7 +233,9 @@ export default function CompOffApprovalsScreen({ navigation }) {
           {requests.length === 0 ? (
             <View style={styles.empty}>
               <MaterialIcons name="redeem" size={44} color="#CBD5E1" />
-              <Text style={styles.emptyText}>No {filter === 'all' ? '' : filter} comp-off requests</Text>
+              <Text style={styles.emptyText}>
+                No {filter === 'all' ? '' : filter} comp-off requests{hasFilters ? ' match these filters' : ''}
+              </Text>
             </View>
           ) : (
             requests.map((r) => {
@@ -228,6 +297,47 @@ export default function CompOffApprovalsScreen({ navigation }) {
         </ScrollView>
       )}
 
+      {/* Employee dropdown */}
+      <Modal visible={empModal} transparent animationType="slide" onRequestClose={() => setEmpModal(false)}>
+        <View style={styles.sheetOverlay}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Select Employee</Text>
+            <View style={styles.searchRow}>
+              <MaterialIcons name="search" size={19} color={COLORS.sub} />
+              <TextInput style={styles.searchInput} placeholder="Search…" placeholderTextColor={COLORS.faint}
+                value={search} onChangeText={setSearch} autoFocus />
+            </View>
+            <TouchableOpacity style={[styles.empRow, !selected && styles.empRowActive]}
+              onPress={() => { setSelected(null); setEmpModal(false); }}>
+              <View style={styles.eAvatar}><MaterialIcons name="groups" size={19} color={COLORS.primary} /></View>
+              <Text style={styles.eName}>All Employees</Text>
+              {!selected && <MaterialIcons name="check-circle" size={20} color={COLORS.green} style={{ marginLeft: 'auto' }} />}
+            </TouchableOpacity>
+            <FlatList
+              data={filteredUsers}
+              keyExtractor={(u) => String(u.id)}
+              style={{ maxHeight: 330 }}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item: u }) => (
+                <TouchableOpacity style={[styles.empRow, selected?.id === u.id && styles.empRowActive]}
+                  onPress={() => { setSelected(u); setEmpModal(false); }}>
+                  <View style={styles.eAvatar}><Text style={styles.eAvatarText}>{initials(u.fullName || u.username)}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.eName}>{u.fullName || u.username}</Text>
+                    <Text style={styles.eSub}>@{u.username}</Text>
+                  </View>
+                  {selected?.id === u.id && <MaterialIcons name="check-circle" size={20} color={COLORS.green} />}
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity style={styles.sheetClose} onPress={() => setEmpModal(false)}>
+              <Text style={styles.sheetCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <BottomNav navigation={navigation} active={null} />
     </View>
   );
@@ -241,6 +351,15 @@ const styles = StyleSheet.create({
   segBtnOn: { backgroundColor: '#fff' },
   segText: { color: '#E0E7FF', fontWeight: '700', fontSize: 11.5 },
   segTextOn: { color: COLORS.primary },
+  filterRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  filterField: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.13)',
+    borderRadius: 14, paddingHorizontal: 10, height: 44, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  filterText: { flex: 1, color: '#fff', fontSize: 12.5, fontWeight: '700' },
+  clearRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 },
+  clearBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingVertical: 2, paddingHorizontal: 4 },
+  clearText: { color: '#C7D2FE', fontSize: 11.5, fontWeight: '800' },
 
   empty: { alignItems: 'center', paddingVertical: 50, gap: 10 },
   emptyText: { color: COLORS.faint, fontSize: 13 },
@@ -265,4 +384,26 @@ const styles = StyleSheet.create({
   rejectBtn: { flex: 1, borderWidth: 1.5, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
   revokeBtn: { marginTop: 14, borderWidth: 1.5, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
   actText: { fontSize: 13.5, fontWeight: '800' },
+
+  /* employee picker */
+  sheetOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: COLORS.card, borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, padding: 18, paddingBottom: 26 },
+  sheetHandle: { width: 42, height: 5, borderRadius: 3, backgroundColor: COLORS.line, alignSelf: 'center', marginBottom: 12 },
+  sheetTitle: { fontSize: 16, fontWeight: '800', color: COLORS.ink, marginBottom: 12, textAlign: 'center' },
+  searchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.field,
+    borderWidth: 1, borderColor: COLORS.line, borderRadius: RADIUS.input, paddingHorizontal: 12, height: 46, marginBottom: 10,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: COLORS.ink },
+  empRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 12 },
+  empRowActive: { backgroundColor: COLORS.indigoSoft },
+  eAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.indigoSoft, justifyContent: 'center', alignItems: 'center' },
+  eAvatarText: { color: COLORS.primary, fontWeight: '800', fontSize: 13 },
+  eName: { fontSize: 14, fontWeight: '700', color: COLORS.ink },
+  eSub: { fontSize: 11, color: COLORS.faint, marginTop: 1 },
+  sheetClose: {
+    marginTop: 10, height: 52, borderRadius: RADIUS.button, borderWidth: 1.5,
+    borderColor: COLORS.line, justifyContent: 'center', alignItems: 'center',
+  },
+  sheetCloseText: { color: '#374151', fontWeight: '700' },
 });

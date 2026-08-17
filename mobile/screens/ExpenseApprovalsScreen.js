@@ -1,25 +1,39 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList,
-  ActivityIndicator, RefreshControl, Modal, TextInput, Alert,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList, Image,
+  ActivityIndicator, RefreshControl, Modal, TextInput, Alert, Linking,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { Calendar } from 'react-native-calendars';
 import { LinearGradient } from 'expo-linear-gradient';
-import { api } from '../lib/api';
+import { api, API_URL } from '../lib/api';
 import { GradientHeader, BottomNav, Card, Chip } from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
+import { useKeyboard } from '../lib/useKeyboard';
+
+const BASE = API_URL.replace('/api', '');
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
-const CUR_YEAR = Number(todayYMD().slice(0, 4));
+const thisMonth = () => todayYMD().slice(0, 7);
+const monthLabel = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 const prettyDate = (iso) =>
-  new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
-const rangeText = (a, b) => (a.slice(0, 10) === b.slice(0, 10) ? prettyDate(a) : `${prettyDate(a)} → ${prettyDate(b)}`);
-const shortDate = (ymd) =>
-  new Date(ymd + 'T00:00:00.000Z').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+  new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 const initials = (n) => (n || 'U').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-const TYPE_COLOR = { CL: '#2563EB', SL: COLORS.orange, PL: COLORS.green, CO: '#7C3AED' };
+
+const TYPE_ICON = {
+  'Travel': 'flight',
+  'Food & Meals': 'restaurant',
+  'Office Supplies': 'work',
+  'Client Entertainment': 'groups',
+  'Stationery': 'edit',
+  'Other': 'more-horiz',
+};
+const iconFor = (t) => TYPE_ICON[t] || 'receipt-long';
+
+// A bill may be a PDF (the web console accepts those) and <Image> draws nothing
+// for one, so the extension decides between a thumbnail and a file chip.
+const isPdfBill = (p) => /\.pdf$/i.test(p || '');
+
 const STATUS_STYLE = {
   pending: { c: COLORS.orange, bg: COLORS.orangeSoft, label: 'Pending' },
   approved: { c: COLORS.green, bg: COLORS.greenSoft, label: 'Approved' },
@@ -28,7 +42,7 @@ const STATUS_STYLE = {
 };
 const FILTERS = ['pending', 'approved', 'rejected', 'all'];
 
-export default function LeaveApprovalsScreen({ navigation }) {
+export default function ExpenseApprovalsScreen({ navigation }) {
   const [filter, setFilter] = useState('pending');
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -36,11 +50,17 @@ export default function LeaveApprovalsScreen({ navigation }) {
   const [busyId, setBusyId] = useState(null);
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null); // null = All Employees
-  const [from, setFrom] = useState(null);
-  const [to, setTo] = useState(null);
+  const [month, setMonth] = useState(null);       // null = every month
   const [empModal, setEmpModal] = useState(false);
   const [search, setSearch] = useState('');
-  const [picking, setPicking] = useState(null); // 'from' | 'to' | null
+  const [viewBill, setViewBill] = useState(null); // full-screen bill URL
+  const [decision, setDecision] = useState(null); // { r, status } while the note is typed
+  const [note, setNote] = useState('');
+  // Both prompts below are Modals with a TextInput. RN keeps every Modal's dialog
+  // window edge-to-edge while the app-wide flag is on (ReactModalHostView reads
+  // navigationBarTranslucent as `field || flag`), so they reach the physical bottom
+  // like the rest of the app and take the same nav-bar-inclusive lift.
+  const kb = useKeyboard();
 
   useEffect(() => {
     api('/users').then(setUsers).catch(() => {});
@@ -50,64 +70,71 @@ export default function LeaveApprovalsScreen({ navigation }) {
     setLoading(true);
     try {
       const qs = [];
-      // A picked range speaks for itself: the server builds the window from
-      // whichever bounds arrive and stays open on the side left as "Any". Sending
-      // a year alongside would clamp that open side back to one calendar year.
-      if (!from && !to) qs.push(`year=${CUR_YEAR}`);
       if (filter !== 'all') qs.push(`status=${filter}`);
       if (selected) qs.push(`userId=${selected.id}`);
-      if (from) qs.push(`from=${from}`);
-      if (to) qs.push(`to=${to}`);
-      const res = await api(`/leaves/requests?${qs.join('&')}`);
+      if (month) qs.push(`month=${month}`);
+      const res = await api(`/expenses/requests${qs.length ? `?${qs.join('&')}` : ''}`);
       setRequests(res.requests || []);
     } catch (e) { Alert.alert('Error', e.message); setRequests([]); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [filter, selected, from, to]);
+  }, [filter, selected, month]);
 
   useEffect(() => { load(); }, [load]);
 
-  const decide = (r, status) => {
-    const go = async (reviewNote) => {
-      setBusyId(r.id);
-      try {
-        await api(`/leaves/requests/${r.id}/decision`, {
-          method: 'PATCH',
-          body: JSON.stringify({ status, reviewNote: reviewNote || '' }),
-        });
-        load();
-      } catch (e) { Alert.alert('Failed', e.message); }
-      finally { setBusyId(null); }
-    };
-    if (status === 'approved') {
-      Alert.alert('Approve leave', `Approve ${r.leaveType?.code} for ${r.user?.fullName || r.user?.username}?`, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Approve', onPress: () => go('') },
-      ]);
-    } else {
-      Alert.alert('Reject leave', `Reject ${r.leaveType?.code} for ${r.user?.fullName || r.user?.username}?`, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Reject', style: 'destructive', onPress: () => go('') },
-      ]);
+  // From "All Months" either arrow lands on the current month rather than
+  // jumping to a period the reviewer never chose.
+  const shiftMonth = (n) => {
+    if (!month) { setMonth(thisMonth()); return; }
+    const d = new Date(month + '-01T00:00:00');
+    d.setMonth(d.getMonth() + n);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (ym <= thisMonth()) setMonth(ym);
+  };
+
+  const decide = (r, status) => { setNote(''); setDecision({ r, status }); };
+
+  // The in-app viewer only knows how to draw images, so a PDF bill is handed to
+  // whatever the reviewer's phone uses to read PDFs.
+  const openBill = (billPath) => {
+    const url = `${BASE}/${billPath}`;
+    if (isPdfBill(billPath)) {
+      Linking.openURL(url).catch(() => Alert.alert('Cannot open', 'No app on this phone can open a PDF bill.'));
+      return;
     }
+    setViewBill(url);
+  };
+
+  const sendDecision = async () => {
+    const { r, status } = decision;
+    const reviewNote = note.trim();
+    setDecision(null);
+    setBusyId(r.id);
+    try {
+      await api(`/expenses/requests/${r.id}/decision`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, reviewNote }),
+      });
+      load();
+    } catch (e) { Alert.alert('Failed', e.message); }
+    finally { setBusyId(null); }
   };
 
   const pendingCount = requests.filter((r) => r.status === 'pending').length;
-  const hasFilters = !!selected || !!from || !!to;
-  const clearFilters = () => { setSelected(null); setFrom(null); setTo(null); };
-  const periodLabel = (from || to)
-    ? `${from ? shortDate(from) : 'Any'} → ${to ? shortDate(to) : 'Any'}`
-    : String(CUR_YEAR);
+  const hasFilters = !!selected || !!month;
+  const clearFilters = () => { setSelected(null); setMonth(null); };
   const filteredUsers = users.filter((u) =>
     (u.username + ' ' + (u.fullName || '')).toLowerCase().includes(search.toLowerCase()));
-  const pickedDate = picking === 'from' ? from : to;
+
+  const approving = decision?.status === 'approved';
+  const decisionWho = decision ? (decision.r.user?.fullName || decision.r.user?.username) : '';
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
 
       <GradientHeader
-        title="Leave Approvals"
-        subtitle={`${periodLabel} • ${pendingCount} pending`}
+        title="Expense Approvals"
+        subtitle={`${month ? monthLabel(month) : 'All months'} • ${pendingCount} pending`}
         onBack={() => navigation.goBack()}
       >
         <View style={styles.segment}>
@@ -119,24 +146,28 @@ export default function LeaveApprovalsScreen({ navigation }) {
         </View>
 
         <View style={styles.filterRow}>
-          <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => { setSearch(''); setEmpModal(true); }}>
+          <TouchableOpacity style={[styles.filterField, { flex: 1.2 }]} onPress={() => { setSearch(''); setEmpModal(true); }}>
             <MaterialIcons name="person" size={17} color="#C7D2FE" />
             <Text style={styles.filterText} numberOfLines={1}>
               {selected ? (selected.fullName || selected.username) : 'All Employees'}
             </Text>
             <MaterialIcons name="arrow-drop-down" size={22} color="#C7D2FE" />
           </TouchableOpacity>
-        </View>
 
-        <View style={styles.filterRow}>
-          <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setPicking('from')}>
-            <MaterialIcons name="event" size={16} color="#C7D2FE" />
-            <Text style={styles.filterText} numberOfLines={1}>From {from ? shortDate(from) : 'Any'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setPicking('to')}>
-            <MaterialIcons name="event" size={16} color="#C7D2FE" />
-            <Text style={styles.filterText} numberOfLines={1}>To {to ? shortDate(to) : 'Any'}</Text>
-          </TouchableOpacity>
+          <View style={[styles.filterField, { flex: 1.1, paddingHorizontal: 4 }]}>
+            <TouchableOpacity onPress={() => shiftMonth(-1)} style={{ padding: 4 }}>
+              <MaterialIcons name="chevron-left" size={22} color="#C7D2FE" />
+            </TouchableOpacity>
+            <TouchableOpacity style={{ flex: 1 }} onPress={() => setMonth(month ? null : thisMonth())}>
+              <Text style={[styles.filterText, { textAlign: 'center' }]} numberOfLines={1}>
+                {month ? monthLabel(month) : 'All Months'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => shiftMonth(1)} disabled={month >= thisMonth()}
+              style={{ padding: 4, opacity: month >= thisMonth() ? 0.3 : 1 }}>
+              <MaterialIcons name="chevron-right" size={22} color="#C7D2FE" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {hasFilters && (
@@ -161,9 +192,9 @@ export default function LeaveApprovalsScreen({ navigation }) {
         >
           {requests.length === 0 ? (
             <View style={styles.empty}>
-              <MaterialIcons name="event-available" size={44} color="#CBD5E1" />
+              <MaterialIcons name="receipt-long" size={44} color="#CBD5E1" />
               <Text style={styles.emptyText}>
-                No {filter === 'all' ? '' : filter} leave requests{hasFilters ? ' match these filters' : ''}
+                No {filter === 'all' ? '' : filter} expense requests{hasFilters ? ' match these filters' : ''}
               </Text>
             </View>
           ) : (
@@ -173,30 +204,53 @@ export default function LeaveApprovalsScreen({ navigation }) {
               return (
                 <Card key={r.id} style={styles.reqCard}>
                   <View style={styles.cardTop}>
-                    <View style={[styles.typeTag, { backgroundColor: (TYPE_COLOR[r.leaveType?.code] || COLORS.primary) + '18' }]}>
-                      <Text style={[styles.typeText, { color: TYPE_COLOR[r.leaveType?.code] || COLORS.primary }]}>{r.leaveType?.code}</Text>
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>{initials(r.user?.fullName || r.user?.username)}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.name}>{r.user?.fullName || r.user?.username}</Text>
-                      <Text style={styles.userSub}>@{r.user?.username}</Text>
+                      <Text style={styles.userSub}>@{r.user?.username} · {prettyDate(r.createdAt)}</Text>
                     </View>
                     <Chip text={st.label} color={st.c} soft={st.bg} />
                   </View>
 
-                  <View style={styles.detailRow}>
-                    <MaterialIcons name="event" size={15} color={COLORS.sub} />
-                    <Text style={styles.detailText}>{rangeText(r.startDate, r.endDate)}</Text>
-                    <View style={styles.daysPill}><Text style={styles.daysText}>{r.days} day{r.days === 1 ? '' : 's'}</Text></View>
+                  <View style={styles.typeRow}>
+                    <Chip text={r.type} icon={iconFor(r.type)} color={COLORS.primary} soft={COLORS.indigoSoft} />
                   </View>
-                  {r.reason ? <Text style={styles.reason}>“{r.reason}”</Text> : null}
+
+                  <View style={styles.bodyRow}>
+                    {r.billPath ? (
+                      <TouchableOpacity activeOpacity={0.9} onPress={() => openBill(r.billPath)}>
+                        {isPdfBill(r.billPath) ? (
+                          <View style={[styles.thumb, styles.pdfThumb]}>
+                            <MaterialIcons name="picture-as-pdf" size={22} color={COLORS.red} />
+                            <Text style={styles.pdfThumbText}>PDF bill</Text>
+                          </View>
+                        ) : (
+                          <Image source={{ uri: `${BASE}/${r.billPath}` }} style={styles.thumb} resizeMode="cover" />
+                        )}
+                      </TouchableOpacity>
+                    ) : null}
+                    <Text style={styles.details}>{r.details}</Text>
+                  </View>
+
+                  {r.status !== 'pending' && r.reviewedBy ? (
+                    <Text style={styles.reviewLine}>
+                      {st.label} by {r.reviewedBy.fullName || r.reviewedBy.username}
+                      {r.reviewedAt ? ` • ${prettyDate(r.reviewedAt)}` : ''}
+                      {r.reviewNote ? ` • ${r.reviewNote}` : ''}
+                    </Text>
+                  ) : null}
 
                   {r.status === 'pending' && (
                     <View style={styles.actions}>
-                      <TouchableOpacity style={[styles.actBtn, styles.rejectBtn]} disabled={busy} onPress={() => decide(r, 'rejected')}>
+                      <TouchableOpacity style={[styles.actBtn, styles.rejectBtn, busy && { opacity: 0.5 }]}
+                        disabled={busy} onPress={() => decide(r, 'rejected')}>
                         <MaterialIcons name="close" size={17} color={COLORS.red} />
                         <Text style={[styles.actText, { color: COLORS.red }]}>Reject</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.85} disabled={busy} onPress={() => decide(r, 'approved')}>
+                      <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.85}
+                        disabled={busy} onPress={() => decide(r, 'approved')}>
                         <LinearGradient colors={GREEN_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                           style={[styles.actBtn, busy && { opacity: 0.75 }]}>
                           {busy ? <ActivityIndicator color="#fff" size="small" /> : (
@@ -219,7 +273,7 @@ export default function LeaveApprovalsScreen({ navigation }) {
       {/* Employee dropdown */}
       <Modal visible={empModal} transparent animationType="slide" onRequestClose={() => setEmpModal(false)}>
         <View style={styles.sheetOverlay}>
-          <View style={styles.sheet}>
+          <View style={[styles.sheet, kb.visible && { paddingBottom: 26 + kb.lift }]}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Select Employee</Text>
             <View style={styles.searchRow}>
@@ -236,7 +290,7 @@ export default function LeaveApprovalsScreen({ navigation }) {
             <FlatList
               data={filteredUsers}
               keyExtractor={(u) => String(u.id)}
-              style={{ maxHeight: 330 }}
+              style={{ maxHeight: kb.visible ? 190 : 330 }}
               keyboardShouldPersistTaps="handled"
               renderItem={({ item: u }) => (
                 <TouchableOpacity style={[styles.empRow, selected?.id === u.id && styles.empRowActive]}
@@ -257,32 +311,55 @@ export default function LeaveApprovalsScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* From / To date picker */}
-      <Modal visible={!!picking} transparent animationType="fade" onRequestClose={() => setPicking(null)}>
-        <View style={styles.overlayCenter}>
-          <View style={styles.calCard}>
-            <Text style={styles.sheetTitle}>Select {picking === 'from' ? 'from' : 'to'} date</Text>
-            <Calendar
-              current={pickedDate || todayYMD()}
-              minDate={picking === 'to' ? (from || undefined) : undefined}
-              maxDate={picking === 'from' ? (to || undefined) : undefined}
-              onDayPress={(d) => {
-                if (picking === 'from') setFrom(d.dateString); else setTo(d.dateString);
-                setPicking(null);
-              }}
-              markedDates={pickedDate ? { [pickedDate]: { selected: true, selectedColor: COLORS.primary } } : {}}
-              theme={{ todayTextColor: COLORS.primary, arrowColor: COLORS.primary, textMonthFontWeight: '800', textDayFontWeight: '600' }}
+      {/* Decision + optional review note. Alert.prompt is iOS-only, so the note
+          is collected in a small confirm card instead. */}
+      <Modal visible={!!decision} transparent animationType="fade" onRequestClose={() => setDecision(null)}>
+        {/* Padding the overlay re-centres the card in what is left above the IME. */}
+        <View style={[styles.overlayCenter, kb.visible && { paddingBottom: 20 + kb.lift }]}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.sheetTitle}>{approving ? 'Approve expense' : 'Reject expense'}</Text>
+            <Text style={styles.confirmText}>
+              {approving ? 'Approve' : 'Reject'} the {decision?.r.type} expense submitted by {decisionWho}?
+            </Text>
+
+            <Text style={styles.fieldLabel}>REVIEW NOTE (OPTIONAL)</Text>
+            <TextInput
+              style={styles.noteInput}
+              placeholder={approving ? 'e.g. Reimbursed with this month’s payroll' : 'e.g. Bill is not readable'}
+              placeholderTextColor={COLORS.faint}
+              value={note}
+              onChangeText={setNote}
+              multiline
+              maxLength={300}
             />
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <TouchableOpacity style={[styles.sheetClose, { flex: 1, marginTop: 0 }]}
-                onPress={() => { if (picking === 'from') setFrom(null); else setTo(null); setPicking(null); }}>
-                <Text style={styles.sheetCloseText}>Any date</Text>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setDecision(null)}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.sheetClose, { flex: 1, marginTop: 0 }]} onPress={() => setPicking(null)}>
-                <Text style={styles.sheetCloseText}>Close</Text>
+              <TouchableOpacity style={{ flex: 1, marginTop: 10 }} activeOpacity={0.85} onPress={sendDecision}>
+                {approving ? (
+                  <LinearGradient colors={GREEN_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.confirmBtn}>
+                    <Text style={styles.confirmBtnText}>Approve</Text>
+                  </LinearGradient>
+                ) : (
+                  <View style={[styles.confirmBtn, { backgroundColor: COLORS.red }]}>
+                    <Text style={styles.confirmBtnText}>Reject</Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Full-screen bill viewer */}
+      <Modal visible={!!viewBill} transparent animationType="fade" onRequestClose={() => setViewBill(null)}>
+        <View style={styles.viewer}>
+          <TouchableOpacity style={styles.viewerClose} onPress={() => setViewBill(null)}>
+            <MaterialIcons name="close" size={26} color="#fff" />
+          </TouchableOpacity>
+          {viewBill && <Image source={{ uri: viewBill }} style={styles.viewerImg} resizeMode="contain" />}
         </View>
       </Modal>
 
@@ -294,7 +371,6 @@ export default function LeaveApprovalsScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
 
-  /* header controls (inside GradientHeader) */
   segment: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12, padding: 4, marginTop: 14 },
   segBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
   segBtnOn: { backgroundColor: '#fff' },
@@ -315,23 +391,25 @@ const styles = StyleSheet.create({
 
   reqCard: { padding: 14, marginBottom: 10 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  typeTag: { width: 42, height: 42, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  typeText: { fontSize: 13, fontWeight: '800' },
+  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#E0E7FF', justifyContent: 'center', alignItems: 'center' },
+  avatarText: { color: COLORS.primary, fontWeight: '800', fontSize: 13 },
   name: { fontSize: 14, fontWeight: '800', color: COLORS.ink },
   userSub: { fontSize: 11.5, color: COLORS.faint, marginTop: 1 },
 
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 },
-  detailText: { fontSize: 13, color: '#374151', fontWeight: '600' },
-  daysPill: { backgroundColor: COLORS.indigoSoft, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 4 },
-  daysText: { fontSize: 11, color: COLORS.primary, fontWeight: '800' },
-  reason: { fontSize: 12.5, color: COLORS.sub, marginTop: 8, fontStyle: 'italic' },
+  typeRow: { flexDirection: 'row', marginTop: 12 },
+  bodyRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 10 },
+  thumb: { width: 60, height: 60, borderRadius: 10, backgroundColor: COLORS.field },
+  pdfThumb: { backgroundColor: COLORS.redSoft, justifyContent: 'center', alignItems: 'center', gap: 2 },
+  pdfThumbText: { fontSize: 9, fontWeight: '800', color: COLORS.red, letterSpacing: 0.2 },
+  details: { flex: 1, fontSize: 12.5, color: '#374151', lineHeight: 18 },
+  reviewLine: { fontSize: 11.5, color: COLORS.faint, fontWeight: '600', marginTop: 8 },
 
   actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
   actBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 46, borderRadius: RADIUS.button },
   rejectBtn: { flex: 1, borderWidth: 1.5, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
   actText: { fontSize: 13.5, fontWeight: '800' },
 
-  /* filter modals */
+  /* employee picker */
   sheetOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: COLORS.card, borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, padding: 18, paddingBottom: 26 },
   sheetHandle: { width: 42, height: 5, borderRadius: 3, backgroundColor: COLORS.line, alignSelf: 'center', marginBottom: 12 },
@@ -352,6 +430,29 @@ const styles = StyleSheet.create({
     borderColor: COLORS.line, justifyContent: 'center', alignItems: 'center',
   },
   sheetCloseText: { color: '#374151', fontWeight: '700' },
+
+  /* decision card */
   overlayCenter: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', padding: 20 },
-  calCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 16 },
+  confirmCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 18 },
+  confirmText: { fontSize: 13.5, color: '#374151', textAlign: 'center', lineHeight: 19 },
+  fieldLabel: { fontSize: 10.5, fontWeight: '800', color: COLORS.faint, letterSpacing: 0.6, marginTop: 14, marginBottom: 8 },
+  noteInput: {
+    backgroundColor: COLORS.field, borderWidth: 1.5, borderColor: COLORS.line, borderRadius: RADIUS.input,
+    padding: 12, fontSize: 14, color: COLORS.ink, minHeight: 64, textAlignVertical: 'top',
+  },
+  cancelBtn: {
+    flex: 1, height: 50, borderRadius: 13, borderWidth: 1.5, borderColor: COLORS.line,
+    justifyContent: 'center', alignItems: 'center', marginTop: 10,
+  },
+  cancelBtnText: { color: '#374151', fontWeight: '700' },
+  confirmBtn: { height: 50, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
+  confirmBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+
+  /* full-screen bill viewer */
+  viewer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center' },
+  viewerClose: {
+    position: 'absolute', top: 48, right: 20, zIndex: 2, width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center',
+  },
+  viewerImg: { width: '100%', height: '80%' },
 });

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
-  Image, Modal, Linking,
+  ActivityIndicator, Alert, Image, Modal, Linking,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -11,6 +10,7 @@ import { File } from 'expo-file-system';
 import { api, apiUpload, API_URL } from '../lib/api';
 import { GradientHeader } from '../components/ui';
 import { COLORS, SHADOW } from '../lib/theme';
+import { useKeyboard } from '../lib/useKeyboard';
 
 const BASE = API_URL.replace('/api', '');
 const POLL_MS = 4000;
@@ -45,6 +45,7 @@ export default function ChatScreen({ route, navigation }) {
   const [mediaCaption, setMediaCaption] = useState('');
   const [viewer, setViewer] = useState(null); // full-screen image URL
   const [notAtBottom, setNotAtBottom] = useState(false);
+  const kb = useKeyboard();
 
   const lastIdRef = useRef(0);
   const atBottomRef = useRef(true);
@@ -100,6 +101,12 @@ export default function ChatScreen({ route, navigation }) {
     pollRef.current = setInterval(poll, POLL_MS);
     return () => clearInterval(pollRef.current);
   }, [loadFull, poll]);
+
+  // The composer grows by the keyboard height so the list shrinks — re-pin to the
+  // newest message, but only if the user was already reading the bottom.
+  useEffect(() => {
+    if (kb.visible && atBottomRef.current) scrollToEnd(true);
+  }, [kb.visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onScroll = (e) => {
     const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
@@ -253,222 +260,225 @@ export default function ChatScreen({ route, navigation }) {
     : `@${other.username}`;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <View style={styles.container}>
-        <StatusBar style="light" />
-        {/* Compact thread header: back · avatar · name/subtitle, inside the shared gradient */}
-        <GradientHeader style={styles.header}>
-          <View style={styles.headRow}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-              <MaterialIcons name="arrow-back" size={22} color="#fff" />
-            </TouchableOpacity>
-            <View style={styles.avatar}>
-              {isGroup
-                ? <MaterialIcons name="groups" size={20} color="#fff" />
-                : <Text style={styles.avatarText}>{initials(title)}</Text>}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title} numberOfLines={1}>{title}</Text>
-              <Text style={styles.subTitle} numberOfLines={1}>{subtitle}</Text>
-            </View>
+    <View style={styles.container}>
+      <StatusBar style="light" />
+      {/* Compact thread header: back · avatar · name/subtitle, inside the shared gradient */}
+      <GradientHeader style={styles.header}>
+        <View style={styles.headRow}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <MaterialIcons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
+          <View style={styles.avatar}>
+            {isGroup
+              ? <MaterialIcons name="groups" size={20} color="#fff" />
+              : <Text style={styles.avatarText}>{initials(title)}</Text>}
           </View>
-        </GradientHeader>
-
-        {messages === null ? (
-          <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} />
-        ) : (
           <View style={{ flex: 1 }}>
-            <FlatList
-              ref={listRef}
-              data={rows}
-              keyExtractor={(r) => String(r.id)}
-              contentContainerStyle={{ padding: 14, paddingBottom: 8 }}
-              onScroll={onScroll}
-              scrollEventThrottle={120}
-              ListEmptyComponent={
-                <View style={styles.empty}>
-                  <Text style={{ fontSize: 40 }}>💬</Text>
-                  <Text style={styles.emptyText}>
-                    {isGroup ? 'Start the conversation in this group!' : 'No messages yet — send a wish or say hello!'}
-                  </Text>
-                </View>
-              }
-              renderItem={({ item: r }) => {
-                if (r.type === 'day') {
-                  return <View style={styles.dayWrap}><Text style={styles.dayText}>{r.day}</Text></View>;
-                }
-                const mine = isMine(r);
-                const senderName = r.sender?.fullName || r.sender?.username;
-                const taggedMe = isGroup && !mine && mentionsMe(r.body);
-                return (
-                  <View style={[styles.bubbleRow, mine ? { justifyContent: 'flex-end' } : null]}>
-                    <View style={[
-                      styles.bubble,
-                      mine ? styles.bubbleMine : styles.bubbleTheirs,
-                      taggedMe && styles.bubbleTaggedMe,
-                    ]}>
-                      {r.showName && senderName ? (
-                        <Text style={[styles.senderName, { color: NAME_COLORS[r.senderId % NAME_COLORS.length] }]}>
-                          {senderName}
-                        </Text>
-                      ) : null}
-                      {r.attachment ? (
-                        r.attachmentType === 'video' ? (
-                          <TouchableOpacity
-                            style={styles.mediaVideo}
-                            activeOpacity={0.85}
-                            onPress={() => Linking.openURL(`${BASE}/${r.attachment}`)}
-                          >
-                            <MaterialIcons name="play-circle-filled" size={42} color="#fff" />
-                            <Text style={styles.mediaVideoText}>Video · tap to play</Text>
-                          </TouchableOpacity>
-                        ) : (
-                          <TouchableOpacity activeOpacity={0.9} onPress={() => setViewer(`${BASE}/${r.attachment}`)}>
-                            <Image source={{ uri: `${BASE}/${r.attachment}` }} style={styles.mediaImage} />
-                          </TouchableOpacity>
-                        )
-                      ) : null}
-                      {r.body ? (
-                        <Text style={[styles.bubbleText, mine && { color: '#fff' }, r.attachment && { marginTop: 6 }]}>
-                          {renderBody(r.body, mine)}
-                        </Text>
-                      ) : null}
-                      <View style={styles.metaRow}>
-                        <Text style={[styles.metaText, mine && { color: 'rgba(255,255,255,0.75)' }]}>{fmtT(r.createdAt)}</Text>
-                        {mine && !isGroup && (
-                          <MaterialIcons name="done-all" size={13} color={r.readAt ? '#7DD3FC' : 'rgba(255,255,255,0.6)'} />
-                        )}
-                      </View>
-                    </View>
-                  </View>
-                );
-              }}
-            />
-
-            {/* Jump to latest — appears once you scroll up to read history */}
-            {notAtBottom && (
-              <TouchableOpacity
-                style={styles.jumpFab}
-                onPress={() => { atBottomRef.current = true; setNotAtBottom(false); scrollToEnd(true); }}
-              >
-                <MaterialIcons name="keyboard-double-arrow-down" size={22} color="#fff" />
-              </TouchableOpacity>
-            )}
+            <Text style={styles.title} numberOfLines={1}>{title}</Text>
+            <Text style={styles.subTitle} numberOfLines={1}>{subtitle}</Text>
           </View>
-        )}
-
-        {/* @mention suggestions (group chats) */}
-        {mentionOptions.length > 0 && (
-          <View style={styles.mentionBar}>
-            {mentionOptions.map((mb) => (
-              <TouchableOpacity key={mb.id} style={styles.mentionChip} onPress={() => insertMention(mb)}>
-                <Text style={styles.mentionChipAt}>@</Text>
-                <Text style={styles.mentionChipText}>{mb.fullName || mb.username}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* Composer */}
-        <View style={styles.composer}>
-          <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={pickFromGallery}>
-            <MaterialIcons name="photo-library" size={21} color={COLORS.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={takePhoto}>
-            <MaterialIcons name="photo-camera" size={21} color={COLORS.primary} />
-          </TouchableOpacity>
-          <TextInput
-            style={styles.input}
-            placeholder={uploading ? 'Sharing media…' : 'Type a message…'}
-            placeholderTextColor={COLORS.faint}
-            value={text}
-            onChangeText={setText}
-            multiline
-            maxLength={1000}
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, (!text.trim() || sending) && { opacity: 0.5 }]}
-            disabled={!text.trim() || sending}
-            onPress={send}
-          >
-            {sending ? <ActivityIndicator color="#fff" size="small" /> : <MaterialIcons name="send" size={20} color="#fff" />}
-          </TouchableOpacity>
         </View>
+      </GradientHeader>
 
-        {/* WhatsApp-style media preview: confirm + caption BEFORE sending */}
-        <Modal
-          visible={!!pendingMedia}
-          transparent
-          animationType="slide"
-          onRequestClose={() => !uploading && setPendingMedia(null)}
-        >
-          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-            <View style={styles.previewOverlay}>
-              {/* Header */}
-              <View style={styles.previewHead}>
-                <TouchableOpacity
-                  style={styles.previewClose}
-                  disabled={uploading}
-                  onPress={() => { setPendingMedia(null); setMediaCaption(''); }}
-                >
-                  <MaterialIcons name="close" size={24} color="#fff" />
-                </TouchableOpacity>
-                <Text style={styles.previewTitle}>
-                  Send to {isGroup ? (groupInfo?.name || group.name) : (other?.fullName || other?.username)}
+      {messages === null ? (
+        <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} />
+      ) : (
+        <View style={{ flex: 1 }}>
+          <FlatList
+            ref={listRef}
+            data={rows}
+            keyExtractor={(r) => String(r.id)}
+            contentContainerStyle={{ padding: 14, paddingBottom: 8 }}
+            onScroll={onScroll}
+            scrollEventThrottle={120}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Text style={{ fontSize: 40 }}>💬</Text>
+                <Text style={styles.emptyText}>
+                  {isGroup ? 'Start the conversation in this group!' : 'No messages yet — send a wish or say hello!'}
                 </Text>
               </View>
-
-              {/* Media */}
-              <View style={styles.previewBody}>
-                {pendingMedia?.type === 'video' ? (
-                  <View style={styles.previewVideo}>
-                    <MaterialIcons name="play-circle-filled" size={64} color="#fff" />
-                    <Text style={styles.previewVideoText}>
-                      Video ready{pendingMedia?.fileSize ? ` · ${(pendingMedia.fileSize / (1024 * 1024)).toFixed(1)} MB` : ''}
-                    </Text>
+            }
+            renderItem={({ item: r }) => {
+              if (r.type === 'day') {
+                return <View style={styles.dayWrap}><Text style={styles.dayText}>{r.day}</Text></View>;
+              }
+              const mine = isMine(r);
+              const senderName = r.sender?.fullName || r.sender?.username;
+              const taggedMe = isGroup && !mine && mentionsMe(r.body);
+              return (
+                <View style={[styles.bubbleRow, mine ? { justifyContent: 'flex-end' } : null]}>
+                  <View style={[
+                    styles.bubble,
+                    mine ? styles.bubbleMine : styles.bubbleTheirs,
+                    taggedMe && styles.bubbleTaggedMe,
+                  ]}>
+                    {r.showName && senderName ? (
+                      <Text style={[styles.senderName, { color: NAME_COLORS[r.senderId % NAME_COLORS.length] }]}>
+                        {senderName}
+                      </Text>
+                    ) : null}
+                    {r.attachment ? (
+                      r.attachmentType === 'video' ? (
+                        <TouchableOpacity
+                          style={styles.mediaVideo}
+                          activeOpacity={0.85}
+                          onPress={() => Linking.openURL(`${BASE}/${r.attachment}`)}
+                        >
+                          <MaterialIcons name="play-circle-filled" size={42} color="#fff" />
+                          <Text style={styles.mediaVideoText}>Video · tap to play</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity activeOpacity={0.9} onPress={() => setViewer(`${BASE}/${r.attachment}`)}>
+                          <Image source={{ uri: `${BASE}/${r.attachment}` }} style={styles.mediaImage} />
+                        </TouchableOpacity>
+                      )
+                    ) : null}
+                    {r.body ? (
+                      <Text style={[styles.bubbleText, mine && { color: '#fff' }, r.attachment && { marginTop: 6 }]}>
+                        {renderBody(r.body, mine)}
+                      </Text>
+                    ) : null}
+                    <View style={styles.metaRow}>
+                      <Text style={[styles.metaText, mine && { color: 'rgba(255,255,255,0.75)' }]}>{fmtT(r.createdAt)}</Text>
+                      {mine && !isGroup && (
+                        <MaterialIcons name="done-all" size={13} color={r.readAt ? '#7DD3FC' : 'rgba(255,255,255,0.6)'} />
+                      )}
+                    </View>
                   </View>
-                ) : pendingMedia ? (
-                  <Image source={{ uri: pendingMedia.uri }} style={styles.previewImage} resizeMode="contain" />
-                ) : null}
-              </View>
+                </View>
+              );
+            }}
+          />
 
-              {/* Caption + send */}
-              <View style={styles.previewFoot}>
-                <TextInput
-                  style={styles.previewCaption}
-                  placeholder="Add a caption…"
-                  placeholderTextColor="rgba(255,255,255,0.55)"
-                  value={mediaCaption}
-                  onChangeText={setMediaCaption}
-                  multiline
-                  maxLength={1000}
-                  editable={!uploading}
-                />
-                <TouchableOpacity
-                  style={[styles.previewSend, uploading && { opacity: 0.6 }]}
-                  disabled={uploading}
-                  onPress={sendPendingMedia}
-                >
-                  {uploading
-                    ? <ActivityIndicator color="#fff" size="small" />
-                    : <MaterialIcons name="send" size={22} color="#fff" />}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-
-        {/* Full-screen image viewer */}
-        <Modal visible={!!viewer} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
-          <View style={styles.viewerOverlay}>
-            <TouchableOpacity style={styles.viewerClose} onPress={() => setViewer(null)}>
-              <MaterialIcons name="close" size={26} color="#fff" />
+          {/* Jump to latest — appears once you scroll up to read history */}
+          {notAtBottom && (
+            <TouchableOpacity
+              style={styles.jumpFab}
+              onPress={() => { atBottomRef.current = true; setNotAtBottom(false); scrollToEnd(true); }}
+            >
+              <MaterialIcons name="keyboard-double-arrow-down" size={22} color="#fff" />
             </TouchableOpacity>
-            {viewer && <Image source={{ uri: viewer }} style={styles.viewerImage} resizeMode="contain" />}
-          </View>
-        </Modal>
+          )}
+        </View>
+      )}
+
+      {/* @mention suggestions (group chats) */}
+      {mentionOptions.length > 0 && (
+        <View style={styles.mentionBar}>
+          {mentionOptions.map((mb) => (
+            <TouchableOpacity key={mb.id} style={styles.mentionChip} onPress={() => insertMention(mb)}>
+              <Text style={styles.mentionChipAt}>@</Text>
+              <Text style={styles.mentionChipText}>{mb.fullName || mb.username}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {/* Composer — owns the bottom strip, so it pays the safe-area inset when
+          the keyboard is closed and the keyboard height when it is open. */}
+      <View style={[styles.composer, { paddingBottom: kb.inset }]}>
+        <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={pickFromGallery}>
+          <MaterialIcons name="photo-library" size={21} color={COLORS.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={takePhoto}>
+          <MaterialIcons name="photo-camera" size={21} color={COLORS.primary} />
+        </TouchableOpacity>
+        <TextInput
+          style={styles.input}
+          placeholder={uploading ? 'Sharing media…' : 'Type a message…'}
+          placeholderTextColor={COLORS.faint}
+          value={text}
+          onChangeText={setText}
+          multiline
+          maxLength={1000}
+        />
+        <TouchableOpacity
+          style={[styles.sendBtn, (!text.trim() || sending) && { opacity: 0.5 }]}
+          disabled={!text.trim() || sending}
+          onPress={send}
+        >
+          {sending ? <ActivityIndicator color="#fff" size="small" /> : <MaterialIcons name="send" size={20} color="#fff" />}
+        </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+
+      {/* WhatsApp-style media preview: confirm + caption BEFORE sending */}
+      <Modal
+        visible={!!pendingMedia}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !uploading && setPendingMedia(null)}
+      >
+        <View style={styles.previewOverlay}>
+          {/* Header */}
+          <View style={styles.previewHead}>
+            <TouchableOpacity
+              style={styles.previewClose}
+              disabled={uploading}
+              onPress={() => { setPendingMedia(null); setMediaCaption(''); }}
+            >
+              <MaterialIcons name="close" size={24} color="#fff" />
+            </TouchableOpacity>
+            <Text style={styles.previewTitle}>
+              Send to {isGroup ? (groupInfo?.name || group.name) : (other?.fullName || other?.username)}
+            </Text>
+          </View>
+
+          {/* Media */}
+          <View style={styles.previewBody}>
+            {pendingMedia?.type === 'video' ? (
+              <View style={styles.previewVideo}>
+                <MaterialIcons name="play-circle-filled" size={64} color="#fff" />
+                <Text style={styles.previewVideoText}>
+                  Video ready{pendingMedia?.fileSize ? ` · ${(pendingMedia.fileSize / (1024 * 1024)).toFixed(1)} MB` : ''}
+                </Text>
+              </View>
+            ) : pendingMedia ? (
+              <Image source={{ uri: pendingMedia.uri }} style={styles.previewImage} resizeMode="contain" />
+            ) : null}
+          </View>
+
+          {/* Caption + send — same hand-rolled lift; the modal window is
+              edge-to-edge too, so it never resizes for the IME either. */}
+          <View
+            style={[
+              styles.previewFoot,
+              { paddingBottom: kb.visible ? 12 + kb.lift : Math.max(kb.inset, 26) },
+            ]}
+          >
+            <TextInput
+              style={styles.previewCaption}
+              placeholder="Add a caption…"
+              placeholderTextColor="rgba(255,255,255,0.55)"
+              value={mediaCaption}
+              onChangeText={setMediaCaption}
+              multiline
+              maxLength={1000}
+              editable={!uploading}
+            />
+            <TouchableOpacity
+              style={[styles.previewSend, uploading && { opacity: 0.6 }]}
+              disabled={uploading}
+              onPress={sendPendingMedia}
+            >
+              {uploading
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <MaterialIcons name="send" size={22} color="#fff" />}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Full-screen image viewer */}
+      <Modal visible={!!viewer} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
+        <View style={styles.viewerOverlay}>
+          <TouchableOpacity style={styles.viewerClose} onPress={() => setViewer(null)}>
+            <MaterialIcons name="close" size={26} color="#fff" />
+          </TouchableOpacity>
+          {viewer && <Image source={{ uri: viewer }} style={styles.viewerImage} resizeMode="contain" />}
+        </View>
+      </Modal>
+    </View>
   );
 }
 
@@ -509,7 +519,9 @@ const styles = StyleSheet.create({
 
   jumpFab: { position: 'absolute', right: 14, bottom: 12, width: 42, height: 42, borderRadius: 21, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center', ...SHADOW.raised, elevation: 4 },
 
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 10, backgroundColor: COLORS.card, borderTopWidth: 1, borderTopColor: COLORS.line },
+  // paddingBottom is set per-render from useKeyboard — safe-area inset when idle,
+  // keyboard height when typing — so the bar always clears the system nav bar.
+  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingTop: 10, backgroundColor: COLORS.card, borderTopWidth: 1, borderTopColor: COLORS.line },
   attachBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: COLORS.indigoSoft, justifyContent: 'center', alignItems: 'center' },
   mediaImage: { width: 210, height: 210, borderRadius: 12, backgroundColor: COLORS.line },
   mediaVideo: { width: 210, height: 130, borderRadius: 12, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', gap: 4 },

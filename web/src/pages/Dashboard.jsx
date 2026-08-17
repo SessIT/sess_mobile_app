@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiGet } from '../lib/api';
-import { fmtTime, fmtHours, todayIST } from '../lib/format';
+import { fmtTime, fmtHours, fmtDate, todayIST } from '../lib/format';
 import {
   Card,
   CardBody,
@@ -23,6 +23,7 @@ import {
   IconUsers,
   IconCalendar,
   IconSparkles,
+  IconGift,
 } from '../components/icons';
 
 /* ---------------------------------------------- Celebrations (premium strip) */
@@ -173,6 +174,9 @@ export default function Dashboard() {
 
   const present = data?.present || [];
   const absent = data?.absent || [];
+  // { date, name } when the selected date is a company holiday. Nobody is expected
+  // in, so "absent" is the wrong word for a list that is really the whole company.
+  const holiday = data?.holiday || null;
 
   // People still on the clock right now.
   const openNow = useMemo(() => present.filter((p) => p.open), [present]);
@@ -214,6 +218,27 @@ export default function Dashboard() {
         <ErrorNote>{error}</ErrorNote>
       ) : (
         <div className="space-y-6">
+          {/* Company holiday callout — explains an empty day before the admin reads
+              the numbers below. Same wording as the Team Attendance day view. */}
+          {holiday && (
+            <Card className="border-brand-200 bg-brand-50">
+              <CardBody className="flex items-start gap-3">
+                <span className="flex items-center justify-center rounded-xl w-9 h-9 shrink-0 bg-white text-brand-700">
+                  <IconGift className="w-5 h-5" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    Company holiday · {holiday.name}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {fmtDate(holiday.date)} — nobody is expected to punch in. Anyone listed below
+                    worked the holiday.
+                  </p>
+                </div>
+              </CardBody>
+            </Card>
+          )}
+
           {/* --------------------------------------------------- Stat cards */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
@@ -230,7 +255,14 @@ export default function Dashboard() {
               icon={<IconClock className="w-5 h-5" />}
               sub={present.length ? `of ${present.length} present` : undefined}
             />
-            <StatCard label="Absent" value={absent.length} tone="red" icon={<IconBan className="w-5 h-5" />} />
+            {/* On a company holiday nobody is absent — they are simply off, so the
+                tile drops the alarming red and says why. */}
+            <StatCard
+              label={holiday ? 'Off (holiday)' : 'Absent'}
+              value={absent.length}
+              tone={holiday ? 'slate' : 'red'}
+              icon={holiday ? <IconGift className="w-5 h-5" /> : <IconBan className="w-5 h-5" />}
+            />
             <StatCard
               label="Total employees"
               value={data?.totalUsers ?? 0}
@@ -292,7 +324,11 @@ export default function Dashboard() {
                   <EmptyState
                     icon={<IconCalendar />}
                     title="No one present"
-                    hint="No attendance recorded for this date."
+                    hint={
+                      holiday
+                        ? 'Company holiday — no punches expected.'
+                        : 'No attendance recorded for this date.'
+                    }
                   />
                 ) : (
                   <div className="overflow-x-auto">
@@ -354,13 +390,17 @@ export default function Dashboard() {
               <CardBody>
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-semibold text-slate-800">
-                    Absent ({absent.length})
+                    {holiday ? 'Off for the holiday' : 'Absent'} ({absent.length})
                   </h2>
-                  <Badge tone={absent.length ? 'red' : 'green'}>{absent.length}</Badge>
+                  <Badge tone={holiday ? 'slate' : absent.length ? 'red' : 'green'}>{absent.length}</Badge>
                 </div>
 
                 {absent.length === 0 ? (
-                  <EmptyState icon={<IconSparkles />} title="Everyone is in" hint="No absentees for this date." />
+                  <EmptyState
+                    icon={<IconSparkles />}
+                    title={holiday ? 'Everyone worked' : 'Everyone is in'}
+                    hint={holiday ? 'Nobody took the holiday off.' : 'No absentees for this date.'}
+                  />
                 ) : (
                   <ul className="divide-y divide-slate-100">
                     {absent.map((u) => (

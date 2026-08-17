@@ -66,6 +66,8 @@ model User {
   reviewedOt          OtRequest[]            @relation("reviewedOt")
   compOffRequests     CompOffRequest[]       @relation("userCompOff")
   reviewedCompOff     CompOffRequest[]       @relation("reviewedCompOff")
+  expenseRequests     ExpenseRequest[]       @relation("userExpenses")
+  reviewedExpenses    ExpenseRequest[]       @relation("reviewedExpenses")
 
   @@map("users")
 }
@@ -119,6 +121,29 @@ model OtRequest {
   @@index([userId, date])
   @@index([status, date])
   @@map("ot_requests")
+}
+
+// Expense claim — an employee picks an expense type, describes the spend and
+// attaches the bill (JPG/PNG/PDF) as the proof. An admin then approves or
+// rejects it, exactly like OT. There is deliberately no amount field: the
+// attached bill is the amount, so nothing has to be keyed in twice.
+model ExpenseRequest {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  type         String // Travel | Food & Meals | Office Supplies | Client Entertainment | Stationery | Other
+  details      String // what the money went on (max 500 chars)
+  billPath     String    @map("bill_path") // uploads/expenses/<file>
+  status       String    @default("pending") // pending | approved | rejected | cancelled
+  reviewNote   String?   @map("review_note")
+  reviewedById Int?      @map("reviewed_by_id")
+  reviewedAt   DateTime? @map("reviewed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  user         User      @relation("userExpenses", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy   User?     @relation("reviewedExpenses", fields: [reviewedById], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("expense_requests")
 }
 
 // Team chat message — either a 1:1 DM (receiverId) or a group post (groupId).

@@ -9,6 +9,8 @@ import { GradientHeader, Card, SectionLabel, PrimaryButton } from '../components
 import { COLORS, RADIUS } from '../lib/theme';
 import { api } from '../lib/api';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const Field = ({ icon, error, children }) => (
   <View style={{ marginBottom: 12 }}>
     <View style={[styles.inputRow, error && { borderColor: COLORS.red }]}>
@@ -22,6 +24,7 @@ const Field = ({ icon, error, children }) => (
 export default function CreateUserScreen({ navigation }) {
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -39,7 +42,9 @@ export default function CreateUserScreen({ navigation }) {
     const e = {};
     if (!username.trim()) e.username = 'Username is required';
     else if (/\s/.test(username.trim())) e.username = 'No spaces allowed';
-    if (phone.length !== 10) e.phone = '10-digit mobile number required (OTP login)';
+    if (!email.trim()) e.email = 'Email is required (employees log in with their email)';
+    else if (!EMAIL_RE.test(email.trim())) e.email = 'Enter a valid email address';
+    if (phone && phone.length !== 10) e.phone = '10-digit mobile number required';
     if (!password) e.password = 'Password is required';
     else if (password.length < 6) e.password = 'Minimum 6 characters';
     if (confirm !== password) e.confirm = 'Passwords do not match';
@@ -52,17 +57,22 @@ export default function CreateUserScreen({ navigation }) {
     if (!validate()) return;
     setBusy(true);
     try {
+      const mail = email.trim().toLowerCase();
       const user = await api('/users', {
         method: 'POST',
         body: JSON.stringify({
           username: username.trim().toLowerCase(),
           fullName: fullName.trim(),
-          phone,
+          email: mail,
+          // omit rather than send '' — the server treats a blank phone as "clear it"
+          phone: phone || undefined,
           password,
           roleName,
         }),
       });
-      Alert.alert('User Created ✅', `@${user.username} • +91 ${phone}\n${roleName}`, [
+      const lines = [`Employee ID: ${user.employeeId || '—'}`, user.email || mail, roleName];
+      if (phone) lines.push(`+91 ${phone}`);
+      Alert.alert('User Created ✅', lines.join('\n'), [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch (e) {
@@ -95,13 +105,19 @@ export default function CreateUserScreen({ navigation }) {
                 value={fullName} onChangeText={setFullName} />
             </Field>
 
+            <Field icon="mail" error={errors.email}>
+              <TextInput style={styles.input} placeholder="Email address * (used to log in)" placeholderTextColor={COLORS.faint}
+                keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+                value={email} onChangeText={setEmail} />
+            </Field>
+
             <View style={{ marginBottom: 2 }}>
               <View style={[styles.inputRow, errors.phone && { borderColor: COLORS.red }]}>
                 <MaterialIcons name="smartphone" size={20} color={COLORS.sub} style={{ marginRight: 8 }} />
                 <View style={styles.ccChip}><Text style={styles.ccText}>+91</Text></View>
                 <TextInput
                   style={[styles.input, { marginLeft: 8, letterSpacing: 1 }]}
-                  placeholder="Mobile number * (OTP login)"
+                  placeholder="Mobile number (optional)"
                   placeholderTextColor={COLORS.faint}
                   keyboardType="number-pad"
                   maxLength={10}
@@ -111,6 +127,13 @@ export default function CreateUserScreen({ navigation }) {
                 {phone.length === 10 && <MaterialIcons name="check-circle" size={19} color={COLORS.green} />}
               </View>
               {errors.phone ? <Text style={styles.fieldError}>{errors.phone}</Text> : null}
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
+              <MaterialIcons name="badge" size={15} color={COLORS.faint} style={{ marginRight: 6 }} />
+              <Text style={[styles.fieldError, { color: COLORS.faint, marginTop: 0, marginLeft: 0 }]}>
+                Employee ID is generated automatically.
+              </Text>
             </View>
           </Card>
 
@@ -153,7 +176,7 @@ export default function CreateUserScreen({ navigation }) {
             onPress={submit}
             style={{ marginTop: 20 }}
           />
-          <Text style={styles.note}>User indha number-la OTP vachi login pannuvaanga</Text>
+          <Text style={styles.note}>User indha email-la OTP vachi login pannuvaanga</Text>
         </ScrollView>
       </View>
     </KeyboardAvoidingView>
