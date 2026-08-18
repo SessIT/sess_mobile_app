@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import LoginScreen from './screens/Login';
@@ -20,13 +19,6 @@ import ChatListScreen from './screens/ChatListScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import ChatScreen from './screens/ChatScreen';
 import LeaveApprovalsScreen from './screens/LeaveApprovalsScreen';
-import LeavePolicyScreen from './screens/LeavePolicyScreen';
-import OvertimeScreen from './screens/OvertimeScreen';
-import OtApprovalsScreen from './screens/OtApprovalsScreen';
-import CompOffScreen from './screens/CompOffScreen';
-import CompOffApprovalsScreen from './screens/CompOffApprovalsScreen';
-import ExpenseScreen from './screens/ExpenseScreen';
-import ExpenseApprovalsScreen from './screens/ExpenseApprovalsScreen';
 import ProfileMenuScreen from './screens/ProfileMenuScreen';
 import TaskListScreen from './screens/TaskListScreen';
 import NotesScreen from './screens/NotesScreen';
@@ -43,7 +35,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const auth = await Promise.race([getAuth(), new Promise(r => setTimeout(() => r(null), 3000))]);
+        const auth = await getAuth();
         if (auth && new Date(auth.expiresAt) > new Date()) {
           setSavedAuth(auth); // token valid — skip login
         }
@@ -62,7 +54,6 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
     <NavigationContainer>
       <Stack.Navigator
         initialRouteName={savedAuth ? 'Dashboard' : 'Login'}
@@ -89,13 +80,6 @@ export default function App() {
         <Stack.Screen name="Notifications" component={NotificationsScreen} />
         <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="LeaveApprovals" component={LeaveApprovalsScreen} />
-        <Stack.Screen name="LeavePolicy" component={LeavePolicyScreen} />
-        <Stack.Screen name="Overtime" component={OvertimeScreen} />
-        <Stack.Screen name="OtApprovals" component={OtApprovalsScreen} />
-        <Stack.Screen name="CompOff" component={CompOffScreen} />
-        <Stack.Screen name="CompOffApprovals" component={CompOffApprovalsScreen} />
-        <Stack.Screen name="Expense" component={ExpenseScreen} />
-        <Stack.Screen name="ExpenseApprovals" component={ExpenseApprovalsScreen} />
         <Stack.Screen name="TaskList" component={TaskListScreen} />
         <Stack.Screen name="Notes" component={NotesScreen} />
         <Stack.Screen name="SendNote" component={SendNoteScreen} />
@@ -104,6 +88,5 @@ export default function App() {
         <Stack.Screen name="Privacy" component={LegalScreen} initialParams={{ doc: 'privacy' }} />
       </Stack.Navigator>
     </NavigationContainer>
-    </SafeAreaProvider>
   );
 }

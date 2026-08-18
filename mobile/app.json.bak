@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "scheme": "sessmobile",
     "ios": {
       "supportsTablet": true
     },
@@ -26,16 +25,7 @@
       "expo-secure-store",
       "expo-sharing",
       "expo-font",
-      "expo-status-bar",
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "newArchEnabled": false,
-            "usesCleartextTraffic": true
-          }
-        }
-      ]
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {
