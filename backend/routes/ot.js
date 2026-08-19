@@ -2,7 +2,7 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 router.use(requireAuth);
 
@@ -44,12 +44,34 @@ function monthRange(month) {
   return { from, to };
 }
 
-// One OT entry per employee per day — reject if a pending/approved row exists.
-async function conflictFor(userId, ymd) {
+// Several OT entries may share a day — a shift can be extended after the fact,
+// and admin can grant extra hours on a date that is already approved. What is
+// rejected is an entry whose window overlaps one already on the books, so the
+// same hour is never counted twice.
+async function overlapFor(userId, ymd, start, end) {
   return prisma.otRequest.findFirst({
-    where: { userId, date: dateOnly(ymd), status: { in: ['pending', 'approved'] } },
+    where: {
+      userId,
+      date: dateOnly(ymd),
+      status: { in: ['pending', 'approved'] },
+      startTime: { lt: end },
+      endTime: { gt: start },
+    },
   });
 }
+
+// Hours already on the books for that day (pending + approved), so the daily
+// total can be capped even though the day is now split across entries.
+async function hoursOnDay(userId, ymd) {
+  const rows = await prisma.otRequest.findMany({
+    where: { userId, date: dateOnly(ymd), status: { in: ['pending', 'approved'] } },
+    select: { hours: true },
+  });
+  return Math.round(rows.reduce((sum, r) => sum + (r.hours || 0), 0) * 100) / 100;
+}
+
+// A day's OT, across every entry, still may not exceed this.
+const MAX_HOURS_PER_DAY = 12;
 
 const includeUser = {
   user: { select: { id: true, username: true, fullName: true } },
@@ -75,7 +97,15 @@ router.get('/my', async (req, res) => {
       const ymd = new Date(r.date).toISOString().slice(0, 10);
       if (r.status === 'approved') approvedHours += r.hours;
       if (r.status === 'pending') pendingHours += r.hours;
-      if (['approved', 'pending'].includes(r.status)) calendar[ymd] = { status: r.status, hours: r.hours };
+      // A day can hold several entries now, so the calendar accumulates hours.
+      // A single pending entry marks the whole day pending.
+      if (['approved', 'pending'].includes(r.status)) {
+        const cur = calendar[ymd] || { status: r.status, hours: 0, entries: 0 };
+        cur.hours = Math.round((cur.hours + r.hours) * 100) / 100;
+        cur.entries += 1;
+        if (r.status === 'pending') cur.status = 'pending';
+        calendar[ymd] = cur;
+      }
     }
     res.json({
       month,
@@ -108,8 +138,14 @@ router.post('/requests', async (req, res) => {
     if (hours <= 0 || hours > 12)
       return res.status(400).json({ message: 'OT duration must be between 15 minutes and 12 hours' });
 
-    if (await conflictFor(req.user.sub, date))
-      return res.status(409).json({ message: 'You already have an OT entry for this date' });
+    if (await overlapFor(req.user.sub, date, start, end))
+      return res.status(409).json({ message: 'You already have an OT entry covering part of this time window' });
+
+    const already = await hoursOnDay(req.user.sub, date);
+    if (already + hours > MAX_HOURS_PER_DAY)
+      return res.status(400).json({
+        message: `You already have ${already}h of OT on ${date} — a day cannot exceed ${MAX_HOURS_PER_DAY}h`,
+      });
 
     const created = await prisma.otRequest.create({
       data: {
@@ -231,8 +267,13 @@ router.post('/grant', requireRole(ADMIN), async (req, res) => {
 
     const created = [], skipped = [];
     for (const u of users) {
-      if (await conflictFor(u.id, date)) {
-        skipped.push({ userId: u.id, name: u.fullName || u.username, reason: 'already has OT on this date' });
+      if (await overlapFor(u.id, date, start, end)) {
+        skipped.push({ userId: u.id, name: u.fullName || u.username, reason: 'already has OT covering these hours' });
+        continue;
+      }
+      const already = await hoursOnDay(u.id, date);
+      if (already + hours > MAX_HOURS_PER_DAY) {
+        skipped.push({ userId: u.id, name: u.fullName || u.username, reason: `already has ${already}h OT on this date` });
         continue;
       }
       const row = await prisma.otRequest.create({

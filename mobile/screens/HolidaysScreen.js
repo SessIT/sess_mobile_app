@@ -11,7 +11,7 @@ import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, HeaderIconButton 
 import { COLORS, RADIUS } from '../lib/theme';
 import { getAuth } from '../lib/auth';
 
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 const CURRENT_YEAR = new Date(Date.now() + 5.5 * 3600000).getUTCFullYear();
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);

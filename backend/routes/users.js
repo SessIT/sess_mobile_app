@@ -4,10 +4,10 @@ const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
 
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 const STANDARD_ROLES = [
-  'Technical Director / Admin',
+  'Admin',
   'Managing Director',
   'HR',
   'Accounts',
@@ -67,7 +67,7 @@ const USER_SELECT = {
   esiNumber: true, epfNumber: true, panNumber: true, salaryCtc: true,
   bankName: true, bankAccount: true, bankIfsc: true,
   exitDate: true, exitReason: true, noticeServed: true, exitFormalitiesDone: true,
-  roles: { select: { role: { select: { name: true } } } },
+  role: { select: { name: true } },
 };
 
 // Validate + coerce the optional profile fields from a request body into a
@@ -154,7 +154,10 @@ async function buildProfileData(body, id) {
   return { ok: true, data };
 }
 
-const shapeUser = (u) => ({ ...u, roles: u.roles.map((r) => r.role.name) });
+// Storage is a single role now, but the clients still read an array (web does u.roles?.[0],
+// mobile does editing.roles?.[0]), so keep emitting one. Destructuring `role` out of the rest
+// keeps the raw relation object from leaking in alongside it - the response shape is unchanged.
+const shapeUser = ({ role, ...u }) => ({ ...u, roles: role ? [role.name] : [] });
 
 // Next free SESS-nnn. Derived from the highest sequence actually in use (not the user
 // count) so deleted users can't make us reissue an id. Non-conforming ids are ignored.
@@ -205,7 +208,7 @@ router.post('/', async (req, res) => {
       fullName: (fullName || '').trim() || null,
       phone: ph.value,
       passwordHash: await bcrypt.hash(password, 10),
-      roles: { create: { roleId: role.id } },
+      roleId: role.id,
       ...prof.data,
     };
     // An explicitly supplied Employee ID wins; otherwise the system allocates one.
@@ -289,9 +292,9 @@ router.patch('/:id', async (req, res) => {
       if (!STANDARD_ROLES.includes(roleName))
         return res.status(400).json({ message: 'Invalid role' });
       const role = await prisma.role.upsert({ where: { name: roleName }, update: {}, create: { name: roleName } });
-      // Replace the user's roles with the single selected role.
-      await prisma.userRole.deleteMany({ where: { userId: id } });
-      await prisma.userRole.create({ data: { userId: id, roleId: role.id } });
+      // Goes into the same update as the other fields, so a role change can no longer half-apply
+      // the way the old delete-then-create pair could (failing between the two left no role at all).
+      data.roleId = role.id;
     }
 
     if (Object.keys(data).length > 0) {

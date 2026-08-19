@@ -1,7 +1,7 @@
 const express = require('express');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 // Admin-only: this exists purely for the web Sites editor. Keeping it gated
 // stops employee tokens from burning the shared Nominatim fair-use quota.

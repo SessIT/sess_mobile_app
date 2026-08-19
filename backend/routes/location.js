@@ -3,7 +3,7 @@ const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
 
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 router.use(requireAuth);
 
 function todayWindowIST() {

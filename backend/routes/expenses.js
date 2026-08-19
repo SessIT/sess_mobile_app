@@ -5,7 +5,7 @@ const multer = require('multer');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 router.use(requireAuth);
 
@@ -13,6 +13,20 @@ const EXPENSE_TYPES = ['Travel', 'Food & Meals', 'Office Supplies', 'Client Ente
 const STATUSES = ['pending', 'approved', 'rejected', 'cancelled'];
 const DETAILS_MAX = 500;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+// Up to this many bills on one claim.
+const MAX_BILLS = 5;
+
+// Shape alone is not enough: new Date('2026-02-30') is not Invalid, it rolls
+// forward and would silently shift the window. Round-trip and reject anything
+// that does not come back as the string we were handed.
+const ymdOrNull = (v) => {
+  const str = String(v || '');
+  if (!YMD.test(str)) return null;
+  const d = new Date(str + 'T00:00:00.000Z');
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10) === str ? str : null;
+};
 
 // createdAt is a real timestamp, so an IST calendar month runs from IST
 // midnight on the 1st to IST midnight on the 1st of the next month.
@@ -20,6 +34,20 @@ function monthRangeIST(month) {
   const [y, m] = month.split('-').map(Number);
   const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
   return { from: new Date(`${month}-01T00:00:00+05:30`), to: new Date(`${next}-01T00:00:00+05:30`) };
+}
+
+// createdAt window from the optional from/to day filters (IST days, `to`
+// inclusive). Either bound alone is fine — "from 01 Jun" means "and after".
+// A backwards range is nonsense and is ignored rather than returning nothing.
+function dayWindow(query) {
+  let from = ymdOrNull(query.from);
+  let to = ymdOrNull(query.to);
+  if (from && to && from > to) { from = null; to = null; }
+  if (!from && !to) return null;
+  const win = {};
+  if (from) win.gte = new Date(`${from}T00:00:00+05:30`);
+  if (to) win.lt = new Date(new Date(`${to}T00:00:00+05:30`).getTime() + 86400000);
+  return win;
 }
 
 const includeUser = {
@@ -32,7 +60,8 @@ const shape = (r) => ({
   id: r.id,
   type: r.type,
   details: r.details,
-  billPath: r.billPath,
+  billPath: r.billPath, // first bill — kept for older clients
+  bills: [r.billPath, ...(r.extraBills || [])].filter(Boolean),
   status: r.status,
   reviewNote: r.reviewNote,
   reviewedAt: r.reviewedAt,
@@ -82,15 +111,21 @@ const upload = multer({
   },
 });
 
-// POST /api/expenses/upload — multipart "file" -> { path } for POST /api/expenses
+// POST /api/expenses/upload — multipart "file" (repeatable, up to MAX_BILLS)
+// -> { path, paths } for POST /api/expenses. `path` is the first upload, so a
+// client that only ever sends one file sees exactly the old response.
 router.post('/upload', (req, res) => {
-  upload.single('file')(req, res, (err) => {
+  upload.array('file', MAX_BILLS)(req, res, (err) => {
     if (err) {
-      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Bill is too large (max 5 MB)' : err.message || 'Upload failed';
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Bill is too large (max 5 MB)'
+        : err.code === 'LIMIT_FILE_COUNT' ? `Attach at most ${MAX_BILLS} bills`
+        : err.message || 'Upload failed';
       return res.status(400).json({ message: msg });
     }
-    if (!req.file) return res.status(400).json({ message: 'No file received' });
-    res.status(201).json({ path: BILL_PREFIX + req.file.filename });
+    const files = req.files || [];
+    if (files.length === 0) return res.status(400).json({ message: 'No file received' });
+    const paths = files.map((f) => BILL_PREFIX + f.filename);
+    res.status(201).json({ path: paths[0], paths });
   });
 });
 
@@ -113,9 +148,19 @@ router.get('/types', (req, res) => res.json(EXPENSE_TYPES));
 router.get('/my', async (req, res) => {
   try {
     const userId = req.user.sub;
+    // Day-wise window (from/to), plus the month shorthand — same filters the
+    // admin list takes, so "My Expenses" can narrow to a single day.
+    const where = { userId };
+    const win = dayWindow(req.query);
+    if (win) where.createdAt = win;
+    else if (MONTH.test(String(req.query.month || ''))) {
+      const { from, to } = monthRangeIST(req.query.month);
+      where.createdAt = { gte: from, lt: to };
+    }
+    if (STATUSES.includes(req.query.status)) where.status = req.query.status;
     const [requests, pending, approved] = await Promise.all([
       prisma.expenseRequest.findMany({
-        where: { userId },
+        where,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: 200,
         include: { reviewedBy: { select: { fullName: true, username: true } } },
@@ -131,6 +176,8 @@ router.get('/my', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { type, details, bill } = req.body || {};
+    // `bills` is the multi-attachment form; a lone `bill` still works.
+    const rawBills = Array.isArray(req.body?.bills) ? req.body.bills : (bill ? [bill] : []);
     if (!EXPENSE_TYPES.includes(type))
       return res.status(400).json({ message: 'Please select an expense type' });
 
@@ -140,12 +187,23 @@ router.post('/', async (req, res) => {
     if (detailsTrim.length > DETAILS_MAX)
       return res.status(400).json({ message: `Expense details must be ${DETAILS_MAX} characters or less` });
 
-    const billPath = billOrNull(bill);
-    if (!billPath)
+    // Every path must be one /upload handed out, so a record can never be
+    // pointed at some other file on the server. Duplicates are dropped.
+    const paths = [...new Set(rawBills.map(billOrNull).filter(Boolean))];
+    if (paths.length === 0)
       return res.status(400).json({ message: 'Attach the bill or proof for this expense' });
+    if (paths.length > MAX_BILLS)
+      return res.status(400).json({ message: `Attach at most ${MAX_BILLS} bills` });
 
     const created = await prisma.expenseRequest.create({
-      data: { userId: req.user.sub, type, details: detailsTrim, billPath, status: 'pending' },
+      data: {
+        userId: req.user.sub,
+        type,
+        details: detailsTrim,
+        billPath: paths[0],
+        extraBills: paths.slice(1),
+        status: 'pending',
+      },
     });
     res.status(201).json(shape(created));
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
@@ -176,7 +234,10 @@ router.get('/requests', requireRole(ADMIN), async (req, res) => {
     if (STATUSES.includes(req.query.status)) where.status = req.query.status;
     const userId = Number(req.query.userId);
     if (Number.isInteger(userId) && userId > 0) where.userId = userId;
-    if (MONTH.test(String(req.query.month || ''))) {
+    // An explicit from/to day window stands in for the month shorthand.
+    const win = dayWindow(req.query);
+    if (win) where.createdAt = win;
+    else if (MONTH.test(String(req.query.month || ''))) {
       const { from, to } = monthRangeIST(req.query.month);
       where.createdAt = { gte: from, lt: to };
     }

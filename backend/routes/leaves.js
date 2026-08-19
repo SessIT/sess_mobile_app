@@ -1,8 +1,9 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { reclaimedLeaveDays } = require('../lib/leaveWorked');
 const router = express.Router();
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 router.use(requireAuth);
 
@@ -66,9 +67,11 @@ async function countLeaveDays(startYmd, endYmd, halfDay) {
 
 // Per-type balances for a user in a year: quota, approved-used, pending, available.
 // CO's quota is dynamic — the number of approved comp-off credits that year.
+// `used` here is net of leave that was approved but then actually worked: a
+// punch on a leave day gives the day back (see lib/leaveWorked.js).
 async function balancesFor(userId, year) {
   await ensureTypes();
-  const [types, policies, reqs, compOffEarned] = await Promise.all([
+  const [types, policies, reqs, compOffEarned, reclaimed] = await Promise.all([
     prisma.leaveType.findMany({ where: { active: true }, orderBy: { id: 'asc' } }),
     prisma.leavePolicy.findMany({ where: { year } }),
     prisma.leaveRequest.findMany({
@@ -85,6 +88,7 @@ async function balancesFor(userId, year) {
         workDate: { gte: dateOnly(`${year}-01-01`), lt: dateOnly(`${year + 1}-01-01`) },
       },
     }),
+    reclaimedLeaveDays(userId, year),
   ]);
   const quota = new Map(policies.map((p) => [p.leaveTypeId, p.quota]));
   for (const t of types) if (t.code === CO) quota.set(t.id, compOffEarned);
@@ -94,10 +98,14 @@ async function balancesFor(userId, year) {
     bucket[r.leaveTypeId] = (bucket[r.leaveTypeId] || 0) + r.days;
   }
   return types.map((t) => {
-    const q = quota.get(t.id) ?? 0, u = used[t.id] || 0, p = pending[t.id] || 0;
+    const q = quota.get(t.id) ?? 0, p = pending[t.id] || 0;
+    // Days approved as leave but worked anyway come straight back off `used`.
+    const back = reclaimed.byType.get(t.id) || 0;
+    const u = Math.max(Math.round(((used[t.id] || 0) - back) * 100) / 100, 0);
     return {
       leaveTypeId: t.id, code: t.code, name: t.name,
-      quota: q, used: u, pending: p, available: Math.round((q - u - p) * 100) / 100,
+      quota: q, used: u, pending: p, reclaimed: back,
+      available: Math.round((q - u - p) * 100) / 100,
     };
   });
 }
@@ -178,7 +186,17 @@ router.get('/my', async (req, res) => {
         include: { leaveType: { select: { code: true, name: true } } },
       }),
     ]);
-    res.json({ year, balances, requests });
+    // Each row carries what it actually cost after worked days were given back,
+    // so the list and the balance card cannot disagree.
+    const { byRequest } = await reclaimedLeaveDays(req.user.sub, year);
+    res.json({
+      year,
+      balances,
+      requests: requests.map((r) => {
+        const back = byRequest.get(r.id) || 0;
+        return { ...r, reclaimedDays: back, chargedDays: Math.round((r.days - back) * 100) / 100 };
+      }),
+    });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 

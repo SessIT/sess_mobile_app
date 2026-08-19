@@ -14,7 +14,8 @@ model User {
   fullName       String?             @map("full_name")
   isActive       Boolean             @default(true) @map("is_active")
   createdAt      DateTime            @default(now()) @map("created_at")
-  roles          UserRole[]
+  roleId         Int?                @map("role_id") // nullable: legacy rows with no join record backfill to NULL, and a NULL role fails requireRole (the safe direction)
+  role           Role?               @relation(fields: [roleId], references: [id])
   attendance     AttendanceSession[]
   phone          String?             @unique
   pinHash        String?             @map("pin_hash") // 4-digit login PIN (bcrypt)
@@ -69,6 +70,7 @@ model User {
   expenseRequests     ExpenseRequest[]       @relation("userExpenses")
   reviewedExpenses    ExpenseRequest[]       @relation("reviewedExpenses")
 
+  @@index([roleId])
   @@map("users")
 }
 
@@ -132,7 +134,10 @@ model ExpenseRequest {
   userId       Int       @map("user_id")
   type         String // Travel | Food & Meals | Office Supplies | Client Entertainment | Stationery | Other
   details      String // what the money went on (max 500 chars)
-  billPath     String    @map("bill_path") // uploads/expenses/<file>
+  billPath     String    @map("bill_path") // primary bill — uploads/expenses/<file>
+  // Any further bills attached to the same claim, same uploads/expenses/ form.
+  // billPath stays the first one so older rows and clients keep working.
+  extraBills   String[]  @default([]) @map("extra_bills")
   status       String    @default("pending") // pending | approved | rejected | cancelled
   reviewNote   String?   @map("review_note")
   reviewedById Int?      @map("reviewed_by_id")
@@ -214,21 +219,11 @@ model AttendanceCorrection {
 }
 
 model Role {
-  id    Int        @id @default(autoincrement())
-  name  String     @unique
-  users UserRole[]
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  users User[]
 
   @@map("roles")
-}
-
-model UserRole {
-  userId Int  @map("user_id")
-  roleId Int  @map("role_id")
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
-  @@id([userId, roleId])
-  @@map("user_roles")
 }
 
 model AttendanceSession {

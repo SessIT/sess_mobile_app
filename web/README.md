@@ -3,7 +3,7 @@
 React + Vite + Tailwind admin panel for the SESS attendance system.
 
 - **Employees** punch in/out from the **mobile app** (unchanged).
-- **Admins** (Technical Director / Admin) run everything from this web console:
+- **Admins** (Admin) run everything from this web console:
   user management, team attendance (with punch photos), and location trails.
 
 It talks to the **same backend** as the mobile app — no backend changes required.
@@ -25,7 +25,7 @@ npx prisma generate
 npm run dev   # or: node server.js  — serves http://localhost:4000
 ```
 
-You also need an **admin** user (role `Technical Director / Admin`) with a password,
+You also need an **admin** user (role `Admin`) with a password,
 since this console uses password login (not OTP).
 
 ## Configure
@@ -74,4 +74,4 @@ build time.
 
 - Times/dates render in **IST (Asia/Kolkata)** to match the mobile app.
 - Non-admin accounts can sign in but see an "Admin access required" screen — the
-  backend also enforces this (`requireRole('Technical Director / Admin')`).
+  backend also enforces this (`requireRole('Admin')`).

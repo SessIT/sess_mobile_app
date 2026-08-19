@@ -1,6 +1,9 @@
 node_modules
-# Keep environment variables out of version control
+# Keep environment variables out of version control — the glob also covers
+# editor/CLI leftovers like .env.save, which hold the same DATABASE_URL.
 .env
+.env.*
+!.env.example
 
 /generated/prisma
 uploads/

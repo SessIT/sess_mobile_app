@@ -51,12 +51,16 @@ router.post('/login', async (req, res) => {
 
     const user = await prisma.user.findFirst({
       where: { username: username.trim(), isActive: true },
-      include: { roles: { include: { role: true } } },
+      include: { role: true },
     });
     if (!user || !(await bcrypt.compare(password, user.passwordHash)))
       return res.status(401).json({ message: 'Invalid username or password' });
 
-    const roles = user.roles.map((ur) => ur.role.name);
+    /* Storage is one role per user now, but the token keeps carrying an ARRAY.
+     * Employee sessions last 90 days, so tokens already on phones must keep
+     * passing the roles.some(...) check in requireRole. The shape is deliberate.
+     * Storage changed; the JWT/response contract did not. */
+    const roles = user.role ? [user.role.name] : [];
     res.json(issueTokens(user, roles, 1)); // admin password session: 1 day
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -259,7 +263,7 @@ router.post('/verify-pin', async (req, res) => {
 
     const user = await prisma.user.findFirst({
       where: { ...identWhere(ident), isActive: true },
-      include: { roles: { include: { role: true } } },
+      include: { role: true },
     });
     if (!user) return res.status(404).json({ message: 'Not registered. Contact your admin.' });
     if (!user.pinHash) return res.status(409).json({ message: 'No PIN set yet. Please create your PIN.' });
@@ -271,7 +275,7 @@ router.post('/verify-pin', async (req, res) => {
     }
     pinAttempts.delete(ident.value);
 
-    const roles = user.roles.map((ur) => ur.role.name);
+    const roles = user.role ? [user.role.name] : []; // still an ARRAY: 90-day tokens must keep validating
     res.json(issueTokens(user, roles, EMPLOYEE_TOKEN_DAYS)); // 90-day session (unchanged)
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -298,7 +302,7 @@ router.post('/set-pin', async (req, res) => {
 
     const user = await prisma.user.findFirst({
       where: { ...identWhere(ident), isActive: true },
-      include: { roles: { include: { role: true } } },
+      include: { role: true },
     });
     if (!user) return res.status(404).json({ message: 'Not registered. Contact your admin.' });
 
@@ -317,7 +321,7 @@ router.post('/set-pin', async (req, res) => {
     });
     pinAttempts.delete(ident.value);
 
-    const roles = user.roles.map((ur) => ur.role.name);
+    const roles = user.role ? [user.role.name] : []; // still an ARRAY: 90-day tokens must keep validating
     res.json(issueTokens(user, roles, EMPLOYEE_TOKEN_DAYS)); // 90-day session (unchanged)
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });

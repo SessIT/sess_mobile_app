@@ -20,7 +20,7 @@ export default function ProtectedRoute() {
         </div>
         <h1 className="text-xl font-bold text-slate-800">Admin access required</h1>
         <p className="max-w-sm text-sm text-slate-500">
-          This console is for the Technical Director / Admin role. Your account is signed in but does
+          This console is for the Admin role. Your account is signed in but does
           not have admin permissions.
         </p>
         <a href="/login" className="mt-2 text-sm font-semibold text-brand-700 hover:underline">

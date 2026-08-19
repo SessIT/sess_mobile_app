@@ -6,6 +6,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Calendar } from 'react-native-calendars';
 import { api, API_URL } from '../lib/api';
 import { GradientHeader, BottomNav, Card, Chip } from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
@@ -16,6 +17,8 @@ const BASE = API_URL.replace('/api', '');
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const thisMonth = () => todayYMD().slice(0, 7);
 const monthLabel = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+const shortDate = (ymd) =>
+  new Date(ymd + 'T00:00:00.000Z').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'UTC' });
 const prettyDate = (iso) =>
   new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 const initials = (n) => (n || 'U').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -34,6 +37,10 @@ const iconFor = (t) => TYPE_ICON[t] || 'receipt-long';
 // for one, so the extension decides between a thumbnail and a file chip.
 const isPdfBill = (p) => /\.pdf$/i.test(p || '');
 
+// A claim can carry several bills. `bills` is the current shape; `billPath` is
+// still read so a row from an older payload still renders its one attachment.
+const billsOf = (r) => (Array.isArray(r.bills) && r.bills.length ? r.bills : [r.billPath].filter(Boolean));
+
 const STATUS_STYLE = {
   pending: { c: COLORS.orange, bg: COLORS.orangeSoft, label: 'Pending' },
   approved: { c: COLORS.green, bg: COLORS.greenSoft, label: 'Approved' },
@@ -51,15 +58,18 @@ export default function ExpenseApprovalsScreen({ navigation }) {
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null); // null = All Employees
   const [month, setMonth] = useState(null);       // null = every month
+  // Day-wise window. It stands in for the month on the server, so the two are
+  // kept mutually exclusive here rather than leaving a filter shown but unused.
+  const [from, setFrom] = useState(null);
+  const [to, setTo] = useState(null);
+  const [picking, setPicking] = useState(null);  // 'from' | 'to' | null
   const [empModal, setEmpModal] = useState(false);
   const [search, setSearch] = useState('');
   const [viewBill, setViewBill] = useState(null); // full-screen bill URL
   const [decision, setDecision] = useState(null); // { r, status } while the note is typed
   const [note, setNote] = useState('');
-  // Both prompts below are Modals with a TextInput. RN keeps every Modal's dialog
-  // window edge-to-edge while the app-wide flag is on (ReactModalHostView reads
-  // navigationBarTranslucent as `field || flag`), so they reach the physical bottom
-  // like the rest of the app and take the same nav-bar-inclusive lift.
+  // Both prompts below are Modals with a TextInput, so they take the same
+  // bottom-spacing rule as the chat/notes composers — see lib/useKeyboard.
   const kb = useKeyboard();
 
   useEffect(() => {
@@ -72,18 +82,26 @@ export default function ExpenseApprovalsScreen({ navigation }) {
       const qs = [];
       if (filter !== 'all') qs.push(`status=${filter}`);
       if (selected) qs.push(`userId=${selected.id}`);
-      if (month) qs.push(`month=${month}`);
+      // A picked day range replaces the month outright — sending both would let
+      // the month clamp a window the reviewer deliberately opened.
+      if (from || to) {
+        if (from) qs.push(`from=${from}`);
+        if (to) qs.push(`to=${to}`);
+      } else if (month) qs.push(`month=${month}`);
       const res = await api(`/expenses/requests${qs.length ? `?${qs.join('&')}` : ''}`);
       setRequests(res.requests || []);
     } catch (e) { Alert.alert('Error', e.message); setRequests([]); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [filter, selected, month]);
+  }, [filter, selected, month, from, to]);
 
   useEffect(() => { load(); }, [load]);
 
   // From "All Months" either arrow lands on the current month rather than
   // jumping to a period the reviewer never chose.
   const shiftMonth = (n) => {
+    // The month and the day range are two ways to say the same thing, so
+    // reaching for one puts the other away.
+    setFrom(null); setTo(null);
     if (!month) { setMonth(thisMonth()); return; }
     const d = new Date(month + '-01T00:00:00');
     d.setMonth(d.getMonth() + n);
@@ -120,8 +138,18 @@ export default function ExpenseApprovalsScreen({ navigation }) {
   };
 
   const pendingCount = requests.filter((r) => r.status === 'pending').length;
-  const hasFilters = !!selected || !!month;
-  const clearFilters = () => { setSelected(null); setMonth(null); };
+  const hasFilters = !!selected || !!month || !!from || !!to;
+  const clearFilters = () => { setSelected(null); setMonth(null); setFrom(null); setTo(null); };
+  const pickedDate = picking === 'from' ? from : to;
+  // What the header says it is showing, in the reviewer's own terms.
+  const periodLabel = from || to
+    ? `${from ? shortDate(from) : 'Any'} → ${to ? shortDate(to) : 'Any'}`
+    : month ? monthLabel(month) : 'All months';
+  const pickDay = (ymd) => {
+    setMonth(null); // a day range supersedes the month
+    if (picking === 'from') setFrom(ymd); else setTo(ymd);
+    setPicking(null);
+  };
   const filteredUsers = users.filter((u) =>
     (u.username + ' ' + (u.fullName || '')).toLowerCase().includes(search.toLowerCase()));
 
@@ -129,12 +157,12 @@ export default function ExpenseApprovalsScreen({ navigation }) {
   const decisionWho = decision ? (decision.r.user?.fullName || decision.r.user?.username) : '';
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={kb.onLayout}>
       <StatusBar style="light" />
 
       <GradientHeader
         title="Expense Approvals"
-        subtitle={`${month ? monthLabel(month) : 'All months'} • ${pendingCount} pending`}
+        subtitle={`${periodLabel} • ${pendingCount} pending`}
         onBack={() => navigation.goBack()}
       >
         <View style={styles.segment}>
@@ -154,20 +182,34 @@ export default function ExpenseApprovalsScreen({ navigation }) {
             <MaterialIcons name="arrow-drop-down" size={22} color="#C7D2FE" />
           </TouchableOpacity>
 
-          <View style={[styles.filterField, { flex: 1.1, paddingHorizontal: 4 }]}>
+          {/* Dimmed while a day range is driving the list — the month is not
+              what is being shown, so it must not look like it is. */}
+          <View style={[styles.filterField, { flex: 1.1, paddingHorizontal: 4 }, (from || to) && { opacity: 0.45 }]}>
             <TouchableOpacity onPress={() => shiftMonth(-1)} style={{ padding: 4 }}>
               <MaterialIcons name="chevron-left" size={22} color="#C7D2FE" />
             </TouchableOpacity>
-            <TouchableOpacity style={{ flex: 1 }} onPress={() => setMonth(month ? null : thisMonth())}>
+            <TouchableOpacity style={{ flex: 1 }} onPress={() => { setFrom(null); setTo(null); setMonth(month ? null : thisMonth()); }}>
               <Text style={[styles.filterText, { textAlign: 'center' }]} numberOfLines={1}>
                 {month ? monthLabel(month) : 'All Months'}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => shiftMonth(1)} disabled={month >= thisMonth()}
-              style={{ padding: 4, opacity: month >= thisMonth() ? 0.3 : 1 }}>
+            <TouchableOpacity onPress={() => shiftMonth(1)} disabled={!!month && month >= thisMonth()}
+              style={{ padding: 4, opacity: month && month >= thisMonth() ? 0.3 : 1 }}>
               <MaterialIcons name="chevron-right" size={22} color="#C7D2FE" />
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Day-wise window — the same From/To flow Leave Approvals uses. */}
+        <View style={styles.filterRow}>
+          <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setPicking('from')}>
+            <MaterialIcons name="event" size={16} color="#C7D2FE" />
+            <Text style={styles.filterText} numberOfLines={1}>From {from ? shortDate(from) : 'Any'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setPicking('to')}>
+            <MaterialIcons name="event" size={16} color="#C7D2FE" />
+            <Text style={styles.filterText} numberOfLines={1}>To {to ? shortDate(to) : 'Any'}</Text>
+          </TouchableOpacity>
         </View>
 
         {hasFilters && (
@@ -219,20 +261,26 @@ export default function ExpenseApprovalsScreen({ navigation }) {
                   </View>
 
                   <View style={styles.bodyRow}>
-                    {r.billPath ? (
-                      <TouchableOpacity activeOpacity={0.9} onPress={() => openBill(r.billPath)}>
-                        {isPdfBill(r.billPath) ? (
-                          <View style={[styles.thumb, styles.pdfThumb]}>
-                            <MaterialIcons name="picture-as-pdf" size={22} color={COLORS.red} />
-                            <Text style={styles.pdfThumbText}>PDF bill</Text>
-                          </View>
-                        ) : (
-                          <Image source={{ uri: `${BASE}/${r.billPath}` }} style={styles.thumb} resizeMode="cover" />
-                        )}
-                      </TouchableOpacity>
-                    ) : null}
                     <Text style={styles.details}>{r.details}</Text>
                   </View>
+
+                  {/* Every attachment on the claim, each opening on its own. */}
+                  {billsOf(r).length > 0 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.billStrip}>
+                      {billsOf(r).map((b) => (
+                        <TouchableOpacity key={b} activeOpacity={0.9} onPress={() => openBill(b)} style={{ marginRight: 8 }}>
+                          {isPdfBill(b) ? (
+                            <View style={[styles.thumb, styles.pdfThumb]}>
+                              <MaterialIcons name="picture-as-pdf" size={22} color={COLORS.red} />
+                              <Text style={styles.pdfThumbText}>PDF bill</Text>
+                            </View>
+                          ) : (
+                            <Image source={{ uri: `${BASE}/${b}` }} style={styles.thumb} resizeMode="cover" />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  ) : null}
 
                   {r.status !== 'pending' && r.reviewedBy ? (
                     <Text style={styles.reviewLine}>
@@ -353,6 +401,32 @@ export default function ExpenseApprovalsScreen({ navigation }) {
         </View>
       </Modal>
 
+      {/* From / To date picker */}
+      <Modal visible={!!picking} transparent animationType="fade" onRequestClose={() => setPicking(null)}>
+        <View style={styles.overlayCenter}>
+          <View style={styles.calCard}>
+            <Text style={styles.sheetTitle}>Select {picking === 'from' ? 'from' : 'to'} date</Text>
+            <Calendar
+              current={pickedDate || todayYMD()}
+              minDate={picking === 'to' ? (from || undefined) : undefined}
+              maxDate={picking === 'from' ? (to || undefined) : undefined}
+              onDayPress={(d) => pickDay(d.dateString)}
+              markedDates={pickedDate ? { [pickedDate]: { selected: true, selectedColor: COLORS.primary } } : {}}
+              theme={{ todayTextColor: COLORS.primary, arrowColor: COLORS.primary, textMonthFontWeight: '800', textDayFontWeight: '600' }}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <TouchableOpacity style={[styles.sheetClose, { flex: 1, marginTop: 0 }]}
+                onPress={() => { if (picking === 'from') setFrom(null); else setTo(null); setPicking(null); }}>
+                <Text style={styles.sheetCloseText}>Any date</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.sheetClose, { flex: 1, marginTop: 0 }]} onPress={() => setPicking(null)}>
+                <Text style={styles.sheetCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Full-screen bill viewer */}
       <Modal visible={!!viewBill} transparent animationType="fade" onRequestClose={() => setViewBill(null)}>
         <View style={styles.viewer}>
@@ -399,6 +473,7 @@ const styles = StyleSheet.create({
   typeRow: { flexDirection: 'row', marginTop: 12 },
   bodyRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 10 },
   thumb: { width: 60, height: 60, borderRadius: 10, backgroundColor: COLORS.field },
+  billStrip: { marginTop: 10 },
   pdfThumb: { backgroundColor: COLORS.redSoft, justifyContent: 'center', alignItems: 'center', gap: 2 },
   pdfThumbText: { fontSize: 9, fontWeight: '800', color: COLORS.red, letterSpacing: 0.2 },
   details: { flex: 1, fontSize: 12.5, color: '#374151', lineHeight: 18 },
@@ -433,6 +508,7 @@ const styles = StyleSheet.create({
 
   /* decision card */
   overlayCenter: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', padding: 20 },
+  calCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 16 },
   confirmCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 18 },
   confirmText: { fontSize: 13.5, color: '#374151', textAlign: 'center', lineHeight: 19 },
   fieldLabel: { fontSize: 10.5, fontWeight: '800', color: COLORS.faint, letterSpacing: 0.6, marginTop: 14, marginBottom: 8 },

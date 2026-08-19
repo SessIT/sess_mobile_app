@@ -199,7 +199,7 @@ export default function NotesScreen({ navigation }) {
   const adminCount = notes.filter(n => n.kind === 'admin').length;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={kb.onLayout}>
       <StatusBar style="light" />
       <GradientHeader
         title="My Notes"
@@ -207,8 +207,8 @@ export default function NotesScreen({ navigation }) {
         onBack={() => navigation.goBack()}
       />
 
-      {/* The composer is lifted by hand (see lib/useKeyboard) — a
-          KeyboardAvoidingView cannot see the IME under Android edge-to-edge. */}
+      {/* Composer spacing comes from lib/useKeyboard rather than a
+          KeyboardAvoidingView, which mis-handles the IME under edge-to-edge. */}
       <View style={{ flex: 1 }}>
         {loading ? (
           <ActivityIndicator style={{ marginTop: 40 }} color={COLORS.primary} />

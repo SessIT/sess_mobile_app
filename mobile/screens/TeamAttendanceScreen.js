@@ -83,6 +83,10 @@ export default function TeamAttendanceScreen({ navigation }) {
 
   // Correction requests (admin review of employee-raised punch fixes)
   const [corrFilter, setCorrFilter] = useState('pending');
+  // Corrections default to the day being corrected == today; widen via the pills.
+  const [corrFrom, setCorrFrom] = useState(todayYMD());
+  const [corrTo, setCorrTo] = useState(todayYMD());
+  const [corrCal, setCorrCal] = useState(null); // 'from' | 'to' while picking
   const [corrections, setCorrections] = useState([]);
   const [corrPending, setCorrPending] = useState(0);
   const [corrBusyId, setCorrBusyId] = useState(null);
@@ -107,11 +111,15 @@ export default function TeamAttendanceScreen({ navigation }) {
     setData(null);
     try {
       if (mode === 'corrections') {
-        const res = await api(`/attendance/admin/corrections${corrFilter === 'all' ? '' : `?status=${corrFilter}`}`);
-        const rows = res.requests || [];
-        setCorrections(rows);
-        if (corrFilter === 'pending') setCorrPending(rows.length);
-        else loadPendingCount();
+        const qs = [];
+        if (corrFilter !== 'all') qs.push(`status=${corrFilter}`);
+        if (corrFrom) qs.push(`from=${corrFrom}`);
+        if (corrTo) qs.push(`to=${corrTo}`);
+        const res = await api(`/attendance/admin/corrections${qs.length ? `?${qs.join('&')}` : ''}`);
+        setCorrections(res.requests || []);
+        // The badge counts every pending correction, not just the ones inside
+        // the window — otherwise the default "today" filter hides the queue.
+        loadPendingCount();
       } else if (mode === 'day') {
         setData(await api(`/attendance/admin/day?date=${date}`));
       } else {
@@ -120,7 +128,7 @@ export default function TeamAttendanceScreen({ navigation }) {
       }
     } catch (e) { Alert.alert('Error', e.message); setData(null); setCorrections([]); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [mode, date, month, selected, corrFilter, loadPendingCount]);
+  }, [mode, date, month, selected, corrFilter, corrFrom, corrTo, loadPendingCount]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -332,16 +340,41 @@ export default function TeamAttendanceScreen({ navigation }) {
 
         {/* Filters — day/month pick an employee + period, corrections pick a status */}
         {mode === 'corrections' ? (
-          <View style={[styles.segment, styles.statusSeg]}>
-            {CORR_FILTERS.map(f => (
-              <TouchableOpacity key={f} style={[styles.segBtn, styles.statusBtn, corrFilter === f && styles.segBtnActive]}
-                onPress={() => setCorrFilter(f)}>
-                <Text style={[styles.segText, styles.statusText, corrFilter === f && styles.segTextActive]}>
-                  {f[0].toUpperCase() + f.slice(1)}
+          <>
+            <View style={[styles.segment, styles.statusSeg]}>
+              {CORR_FILTERS.map(f => (
+                <TouchableOpacity key={f} style={[styles.segBtn, styles.statusBtn, corrFilter === f && styles.segBtnActive]}
+                  onPress={() => setCorrFilter(f)}>
+                  <Text style={[styles.segText, styles.statusText, corrFilter === f && styles.segTextActive]}>
+                    {f[0].toUpperCase() + f.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* From / To on the day being corrected. */}
+            <View style={styles.filterRow}>
+              <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setCorrCal('from')}>
+                <MaterialIcons name="event" size={16} color="#C7D2FE" />
+                <Text style={styles.filterText} numberOfLines={1}>
+                  {corrFrom ? (corrFrom === todayYMD() ? 'Today' : corrFrom) : 'Any'}
                 </Text>
               </TouchableOpacity>
-            ))}
-          </View>
+              <MaterialIcons name="arrow-forward" size={16} color="#C7D2FE" style={{ alignSelf: 'center' }} />
+              <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setCorrCal('to')}>
+                <MaterialIcons name="event" size={16} color="#C7D2FE" />
+                <Text style={styles.filterText} numberOfLines={1}>
+                  {corrTo ? (corrTo === todayYMD() ? 'Today' : corrTo) : 'Any'}
+                </Text>
+              </TouchableOpacity>
+              {(corrFrom || corrTo) && (
+                <TouchableOpacity style={styles.clearDates} onPress={() => { setCorrFrom(null); setCorrTo(null); }}>
+                  <MaterialIcons name="close" size={15} color="#C7D2FE" />
+                  <Text style={styles.clearDatesText}>All dates</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </>
         ) : (
           <View style={styles.filterRow}>
             <TouchableOpacity style={[styles.filterField, { flex: 1.2 }]} onPress={() => { setSearch(''); setEmpModal(true); }}>
@@ -576,7 +609,20 @@ export default function TeamAttendanceScreen({ navigation }) {
             corrections.length === 0 ? (
               <View style={styles.empty}>
                 <MaterialIcons name="fact-check" size={44} color="#CBD5E1" />
-                <Text style={styles.emptyText}>No {corrFilter === 'all' ? '' : corrFilter} correction requests</Text>
+                <Text style={styles.emptyText}>
+                  No {corrFilter === 'all' ? '' : corrFilter} correction requests
+                  {corrFrom || corrTo ? ' in this date range' : ''}
+                </Text>
+                {/* A correction is usually raised for an EARLIER day, so the
+                    default "today" window hides most of the queue. Say so. */}
+                {(corrFrom || corrTo) && corrPending > 0 && (
+                  <TouchableOpacity style={styles.emptyHint} onPress={() => { setCorrFrom(null); setCorrTo(null); }}>
+                    <MaterialIcons name="history" size={15} color={COLORS.primary} />
+                    <Text style={styles.emptyHintText}>
+                      {corrPending} pending on other dates — show all
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : (
               corrections.map(r => {
@@ -677,6 +723,42 @@ export default function TeamAttendanceScreen({ navigation }) {
             <TouchableOpacity style={styles.sheetClose} onPress={() => setEmpModal(false)}>
               <Text style={styles.sheetCloseText}>Close</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Calendar (corrections from/to) */}
+      <Modal visible={!!corrCal} transparent animationType="fade" onRequestClose={() => setCorrCal(null)}>
+        <View style={styles.overlayCenter}>
+          <View style={styles.calCard}>
+            <Text style={styles.sheetTitle}>{corrCal === 'to' ? 'To Date' : 'From Date'}</Text>
+            <Calendar
+              current={(corrCal === 'to' ? corrTo : corrFrom) || todayYMD()}
+              maxDate={todayYMD()}
+              onDayPress={(d) => {
+                if (corrCal === 'to') {
+                  setCorrTo(d.dateString);
+                  if (corrFrom && d.dateString < corrFrom) setCorrFrom(d.dateString);
+                } else {
+                  setCorrFrom(d.dateString);
+                  if (corrTo && d.dateString > corrTo) setCorrTo(d.dateString);
+                }
+                setCorrCal(null);
+              }}
+              markedDates={{
+                ...(corrFrom ? { [corrFrom]: { selected: true, selectedColor: COLORS.primary } } : {}),
+                ...(corrTo ? { [corrTo]: { selected: true, selectedColor: COLORS.primary } } : {}),
+              }}
+              theme={{ todayTextColor: COLORS.primary, arrowColor: COLORS.primary, textMonthFontWeight: '800', textDayFontWeight: '600' }}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <PrimaryButton title="Today" style={{ flex: 1 }}
+                onPress={() => { if (corrCal === 'to') setCorrTo(todayYMD()); else setCorrFrom(todayYMD()); setCorrCal(null); }} />
+              <TouchableOpacity style={[styles.sheetClose, { flex: 1, marginTop: 0 }]}
+                onPress={() => { if (corrCal === 'to') setCorrTo(null); else setCorrFrom(null); setCorrCal(null); }}>
+                <Text style={styles.sheetCloseText}>Any date</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -924,6 +1006,18 @@ const styles = StyleSheet.create({
   },
 
   /* corrections tab */
+  clearDates: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 8, paddingVertical: 7, borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  clearDatesText: { color: '#C7D2FE', fontSize: 11, fontWeight: '700' },
+  emptyHint: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12,
+    backgroundColor: COLORS.indigoSoft,
+  },
+  emptyHintText: { color: COLORS.primary, fontSize: 12, fontWeight: '700' },
   empty: { alignItems: 'center', paddingVertical: 50, gap: 10 },
   emptyText: { color: COLORS.faint, fontSize: 13 },
   reqCard: { padding: 14, marginBottom: 10 },

@@ -260,7 +260,7 @@ export default function ChatScreen({ route, navigation }) {
     : `@${other.username}`;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={kb.onLayout}>
       <StatusBar style="light" />
       {/* Compact thread header: back · avatar · name/subtitle, inside the shared gradient */}
       <GradientHeader style={styles.header}>
@@ -376,7 +376,8 @@ export default function ChatScreen({ route, navigation }) {
       )}
 
       {/* Composer — owns the bottom strip, so it pays the safe-area inset when
-          the keyboard is closed and the keyboard height when it is open. */}
+          the keyboard is closed. Android resizes the window for the IME, so it
+          already sits on the keyboard when open (see lib/useKeyboard). */}
       <View style={[styles.composer, { paddingBottom: kb.inset }]}>
         <TouchableOpacity style={styles.attachBtn} disabled={uploading} onPress={pickFromGallery}>
           <MaterialIcons name="photo-library" size={21} color={COLORS.primary} />
@@ -438,8 +439,8 @@ export default function ChatScreen({ route, navigation }) {
             ) : null}
           </View>
 
-          {/* Caption + send — same hand-rolled lift; the modal window is
-              edge-to-edge too, so it never resizes for the IME either. */}
+          {/* Caption + send — same spacing rule as the main composer; the
+              dialog window resizes for the IME just like the activity does. */}
           <View
             style={[
               styles.previewFoot,

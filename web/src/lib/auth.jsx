@@ -2,8 +2,8 @@ import { createContext, useContext, useMemo, useState } from 'react';
 import { apiPost, getStoredAuth, setStoredAuth } from './api';
 
 // The one role the backend actually authorizes for /admin and /users endpoints.
-// (See backend: requireRole('Technical Director / Admin').)
-export const ADMIN_ROLE = 'Technical Director / Admin';
+// (See backend: requireRole('Admin').)
+export const ADMIN_ROLE = 'Admin';
 
 const AuthContext = createContext(null);
 

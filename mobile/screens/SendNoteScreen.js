@@ -145,7 +145,7 @@ export default function SendNoteScreen({ navigation }) {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={kb.onLayout}>
       <StatusBar style="light" />
       <GradientHeader
         title="Send Note"
@@ -166,8 +166,8 @@ export default function SendNoteScreen({ navigation }) {
       </GradientHeader>
 
       {tab === 'compose' ? (
-        // The compose box is lifted by hand (see lib/useKeyboard) — a
-        // KeyboardAvoidingView cannot see the IME under Android edge-to-edge.
+        // Compose-box spacing comes from lib/useKeyboard rather than a
+        // KeyboardAvoidingView, which mis-handles the IME under edge-to-edge.
         <View style={{ flex: 1 }}>
           <View style={styles.searchWrap}>
             <MaterialIcons name="search" size={19} color={COLORS.faint} />

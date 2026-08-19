@@ -8,7 +8,7 @@ import { COLORS, SHADOW } from '../lib/theme';
 import { api } from '../lib/api';
 import { getAuth } from '../lib/auth';
 
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 const initials = (n) => (n || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 

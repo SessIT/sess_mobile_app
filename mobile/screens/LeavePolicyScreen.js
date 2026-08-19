@@ -10,7 +10,7 @@ import { COLORS, RADIUS } from '../lib/theme';
 import { api } from '../lib/api';
 import { getAuth } from '../lib/auth';
 
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 const CURRENT_YEAR = new Date(Date.now() + 5.5 * 3600000).getUTCFullYear();
 // Same window the web console offers in its year dropdown.

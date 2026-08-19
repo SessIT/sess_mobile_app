@@ -6,6 +6,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
+import { Calendar } from 'react-native-calendars';
 import { File } from 'expo-file-system';
 import { api, apiUpload, API_URL } from '../lib/api';
 import { GradientHeader, BottomNav, Card, Chip, PrimaryButton } from '../components/ui';
@@ -33,6 +34,15 @@ const isPdfBill = (p) => /\.pdf$/i.test(p || '');
 
 const MAX_DETAILS = 500;
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
+// One claim may carry several bills — the server caps it at the same number.
+const MAX_BILLS = 5;
+
+const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
+const shortDate = (ymd) =>
+  new Date(ymd + 'T00:00:00.000Z').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+
+// Rows carry `bills` now; `billPath` is still read so an older payload renders.
+const billsOf = (r) => (Array.isArray(r.bills) && r.bills.length ? r.bills : [r.billPath].filter(Boolean));
 
 const STATUS_STYLE = {
   pending: { c: COLORS.orange, bg: COLORS.orangeSoft, label: 'Pending' },
@@ -52,13 +62,21 @@ export default function ExpenseScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [viewBill, setViewBill] = useState(null); // full-screen bill URL
+  // Day-wise window, the same shape Leave Management uses. Either bound alone
+  // is valid — the server leaves the other side open.
+  const [from, setFrom] = useState(null);
+  const [to, setTo] = useState(null);
+  const [picking, setPicking] = useState(null); // 'from' | 'to' | null
 
   const load = useCallback(async () => {
     try {
-      setData(await api('/expenses/my'));
+      const qs = [];
+      if (from) qs.push(`from=${from}`);
+      if (to) qs.push(`to=${to}`);
+      setData(await api(`/expenses/my${qs.length ? `?${qs.join('&')}` : ''}`));
     } catch (e) { Alert.alert('Error', e.message); }
     finally { setLoading(false); setRefreshing(false); }
-  }, []);
+  }, [from, to]);
 
   useEffect(() => {
     load();
@@ -97,6 +115,10 @@ export default function ExpenseScreen({ navigation }) {
 
   const totals = data?.totals || { pending: 0, approved: 0 };
   const requests = data?.requests || [];
+  const pickedDate = picking === 'from' ? from : to;
+  const periodLabel = from || to
+    ? `${from ? shortDate(from) : 'Any'} → ${to ? shortDate(to) : 'Any'}`
+    : 'All time';
 
   return (
     <View style={styles.container}>
@@ -104,9 +126,29 @@ export default function ExpenseScreen({ navigation }) {
 
       <GradientHeader
         title="My Expenses"
-        subtitle={`${totals.pending} pending • ${totals.approved} approved`}
+        subtitle={`${periodLabel} • ${totals.pending} pending • ${totals.approved} approved`}
         onBack={() => navigation.goBack()}
-      />
+      >
+        <View style={styles.filterRow}>
+          <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setPicking('from')}>
+            <MaterialIcons name="event" size={16} color="#C7D2FE" />
+            <Text style={styles.filterText} numberOfLines={1}>From {from ? shortDate(from) : 'Any'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.filterField, { flex: 1 }]} onPress={() => setPicking('to')}>
+            <MaterialIcons name="event" size={16} color="#C7D2FE" />
+            <Text style={styles.filterText} numberOfLines={1}>To {to ? shortDate(to) : 'Any'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        {(from || to) ? (
+          <View style={styles.clearRow}>
+            <TouchableOpacity style={styles.clearBtn} onPress={() => { setFrom(null); setTo(null); }}>
+              <MaterialIcons name="close" size={13} color="#C7D2FE" />
+              <Text style={styles.clearText}>Clear dates</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </GradientHeader>
 
       {loading ? (
         <ActivityIndicator size="large" color={COLORS.primary} style={{ flex: 1 }} />
@@ -172,20 +214,26 @@ export default function ExpenseScreen({ navigation }) {
                   </View>
 
                   <View style={styles.reqBody}>
-                    {r.billPath ? (
-                      <TouchableOpacity activeOpacity={0.9} onPress={() => openBill(r.billPath)}>
-                        {isPdfBill(r.billPath) ? (
-                          <View style={[styles.thumb, styles.pdfThumb]}>
-                            <MaterialIcons name="picture-as-pdf" size={20} color={COLORS.red} />
-                            <Text style={styles.pdfThumbText}>PDF bill</Text>
-                          </View>
-                        ) : (
-                          <Image source={{ uri: `${BASE}/${r.billPath}` }} style={styles.thumb} resizeMode="cover" />
-                        )}
-                      </TouchableOpacity>
-                    ) : null}
                     <Text style={styles.reqDetails} numberOfLines={2}>{r.details}</Text>
                   </View>
+
+                  {/* Every attachment on the claim, each opening on its own. */}
+                  {billsOf(r).length > 0 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.billStrip}>
+                      {billsOf(r).map((b) => (
+                        <TouchableOpacity key={b} activeOpacity={0.9} onPress={() => openBill(b)} style={{ marginRight: 8 }}>
+                          {isPdfBill(b) ? (
+                            <View style={[styles.thumb, styles.pdfThumb]}>
+                              <MaterialIcons name="picture-as-pdf" size={20} color={COLORS.red} />
+                              <Text style={styles.pdfThumbText}>PDF bill</Text>
+                            </View>
+                          ) : (
+                            <Image source={{ uri: `${BASE}/${b}` }} style={styles.thumb} resizeMode="cover" />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  ) : null}
 
                   {r.reviewNote ? (
                     <Text style={[styles.reviewNote, r.status === 'rejected' && { color: COLORS.red }]}>
@@ -216,6 +264,35 @@ export default function ExpenseScreen({ navigation }) {
         </View>
       </Modal>
 
+      {/* From / To date picker — same flow as Leave Management */}
+      <Modal visible={!!picking} transparent animationType="fade" onRequestClose={() => setPicking(null)}>
+        <View style={styles.overlayCenter}>
+          <View style={styles.calCard}>
+            <Text style={styles.sheetTitle}>Select {picking === 'from' ? 'from' : 'to'} date</Text>
+            <Calendar
+              current={pickedDate || todayYMD()}
+              minDate={picking === 'to' ? (from || undefined) : undefined}
+              maxDate={picking === 'from' ? (to || undefined) : undefined}
+              onDayPress={(d) => {
+                if (picking === 'from') setFrom(d.dateString); else setTo(d.dateString);
+                setPicking(null);
+              }}
+              markedDates={pickedDate ? { [pickedDate]: { selected: true, selectedColor: COLORS.primary } } : {}}
+              theme={{ todayTextColor: COLORS.primary, arrowColor: COLORS.primary, textMonthFontWeight: '800', textDayFontWeight: '600' }}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <TouchableOpacity style={[styles.sheetClose, { flex: 1, marginTop: 0 }]}
+                onPress={() => { if (picking === 'from') setFrom(null); else setTo(null); setPicking(null); }}>
+                <Text style={styles.sheetCloseText}>Any date</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.sheetClose, { flex: 1, marginTop: 0 }]} onPress={() => setPicking(null)}>
+                <Text style={styles.sheetCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <BottomNav navigation={navigation} active="profile" />
     </View>
   );
@@ -225,23 +302,25 @@ export default function ExpenseScreen({ navigation }) {
 function AddExpenseModal({ visible, types, onClose, onDone }) {
   const [type, setType] = useState('');
   const [details, setDetails] = useState('');
-  const [bill, setBill] = useState(null); // { path, uri, name } — path is what the API stores
+  // A claim can carry up to MAX_BILLS attachments: [{ path, uri, name }].
+  // `path` is what the API stores.
+  const [bills, setBills] = useState([]);
   const [typeOpen, setTypeOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState({});
-  // The sheet is pinned to the bottom edge, so it has to carry the IME itself.
-  // RN keeps every Modal's dialog window edge-to-edge while the app-wide flag is on
-  // (ReactModalHostView reads navigationBarTranslucent as `field || flag`), so this
-  // sheet reaches the physical bottom exactly like the composers do and needs the
-  // same nav-bar-inclusive lift — see lib/useKeyboard.
+  // The sheet is pinned to the bottom edge, so it takes the same spacing rule as
+  // the chat/notes composers — see lib/useKeyboard. It is sized by its content
+  // up to the cap in styles.sheet; the form scrolls inside whatever is left, so
+  // the buttons always sit directly under the form with no dead space, however
+  // many bills are attached and whether or not the IME is up.
   const kb = useKeyboard();
 
   useEffect(() => {
     if (visible) {
       setType('');
       setDetails('');
-      setBill(null);
+      setBills([]);
       setTypeOpen(false);
       setUploading(false);
       setBusy(false);
@@ -249,9 +328,15 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
     }
   }, [visible]);
 
-  // The bill uploads the moment it is picked, so Submit only ever posts a path.
+  // Bills upload the moment they are picked, so Submit only ever posts paths.
+  // The gallery allows a multi-select; the camera adds one shot at a time.
   const pick = async (fromCamera) => {
     if (uploading || busy) return;
+    const room = MAX_BILLS - bills.length;
+    if (room <= 0) {
+      Alert.alert('Limit reached', `A claim can carry at most ${MAX_BILLS} bills.`);
+      return;
+    }
     const perm = fromCamera
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -261,24 +346,33 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
     }
     const result = fromCamera
       ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
+      : await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'], quality: 0.7, allowsMultipleSelection: true, selectionLimit: room,
+        });
     if (result.canceled || !result.assets?.length) return;
 
-    const asset = result.assets[0];
-    if (asset.fileSize && asset.fileSize > MAX_BILL_BYTES) {
-      Alert.alert('Too large', 'Please pick a bill photo under 5 MB.');
-      return;
-    }
-    const name = asset.fileName || 'bill.jpg';
+    // Anything past the remaining room is dropped rather than silently failing
+    // the whole upload on the server's cap.
+    const picked = result.assets.slice(0, room);
+    const tooBig = picked.filter((a) => a.fileSize && a.fileSize > MAX_BILL_BYTES);
+    const ok = picked.filter((a) => !(a.fileSize && a.fileSize > MAX_BILL_BYTES));
+    if (tooBig.length) Alert.alert('Too large', `${tooBig.length} file(s) over 5 MB were skipped.`);
+    if (!ok.length) return;
+
     setUploading(true);
     setErrors((e) => ({ ...e, bill: null }));
     try {
       // SDK 57: the WinterCG fetch only accepts real Blob/File parts — the
       // expo-file-system File class wraps the picked URI as a proper Blob.
+      // The field repeats, which is what upload.array('file') expects.
       const form = new FormData();
-      form.append('file', new File(asset.uri), name);
+      for (const a of ok) form.append('file', new File(a.uri), a.fileName || 'bill.jpg');
       const up = await apiUpload('/expenses/upload', form);
-      setBill({ path: up.path, uri: asset.uri, name });
+      const paths = up.paths || (up.path ? [up.path] : []);
+      setBills((prev) => [
+        ...prev,
+        ...paths.map((path, i) => ({ path, uri: ok[i]?.uri, name: ok[i]?.fileName || 'bill.jpg' })),
+      ]);
     } catch (e) {
       Alert.alert('Upload failed', e.message);
     } finally {
@@ -286,8 +380,10 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
     }
   };
 
+  const removeBill = (path) => setBills((prev) => prev.filter((b) => b.path !== path));
+
   const attach = () => {
-    Alert.alert('Attach bill / proof', 'Add a photo of the bill', [
+    Alert.alert('Attach bill / proof', 'Add photos of the bills', [
       { text: 'Take photo', onPress: () => pick(true) },
       { text: 'Choose from gallery', onPress: () => pick(false) },
       { text: 'Cancel', style: 'cancel' },
@@ -299,7 +395,7 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
     if (!type) next.type = 'Select an expense type.';
     if (!details.trim()) next.details = 'Enter the expense details.';
     else if (details.trim().length > MAX_DETAILS) next.details = `Keep the details under ${MAX_DETAILS} characters.`;
-    if (!bill) next.bill = 'Attach the bill or proof.';
+    if (!bills.length) next.bill = 'Attach at least one bill or proof.';
     setErrors(next);
     if (Object.keys(next).length) return;
 
@@ -307,7 +403,7 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
     try {
       await api('/expenses', {
         method: 'POST',
-        body: JSON.stringify({ type, details: details.trim(), bill: bill.path }),
+        body: JSON.stringify({ type, details: details.trim(), bills: bills.map((b) => b.path) }),
       });
       Alert.alert('Submitted ✅', 'Your expense has been sent for approval.');
       onDone();
@@ -320,13 +416,13 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.sheetOverlay}>
+      <View style={styles.sheetOverlay} onLayout={kb.onLayout}>
         <View style={[styles.sheet, kb.visible && { paddingBottom: 26 + kb.lift }]}>
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>Add Expense</Text>
 
           {/* The form gives up height to the keyboard so the Submit row stays on screen. */}
-          <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: kb.visible ? 240 : 460 }}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={{ flexShrink: 1 }}>
             <Text style={styles.fieldLabel}>ADD EXPENSE *</Text>
             <TouchableOpacity style={[styles.dropField, errors.type && styles.fieldBad]} onPress={() => setTypeOpen(true)}>
               <MaterialIcons
@@ -357,19 +453,20 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
             </View>
             {errors.details ? <Text style={styles.fieldError}>{errors.details}</Text> : null}
 
-            <Text style={styles.fieldLabel}>ATTACH BILL / PROOF *</Text>
-            {bill ? (
-              <View style={styles.billRow}>
-                <Image source={{ uri: bill.uri }} style={styles.billThumb} />
+            <Text style={styles.fieldLabel}>ATTACH BILLS / PROOF * ({bills.length}/{MAX_BILLS})</Text>
+            {bills.map((b) => (
+              <View key={b.path} style={[styles.billRow, { marginBottom: 8 }]}>
+                <Image source={{ uri: b.uri }} style={styles.billThumb} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.billName} numberOfLines={1}>{bill.name}</Text>
+                  <Text style={styles.billName} numberOfLines={1}>{b.name}</Text>
                   <Text style={styles.billOk}>Uploaded ✓</Text>
                 </View>
-                <TouchableOpacity style={styles.billDelete} onPress={() => setBill(null)} disabled={busy}>
+                <TouchableOpacity style={styles.billDelete} onPress={() => removeBill(b.path)} disabled={busy}>
                   <MaterialIcons name="delete-outline" size={20} color={COLORS.red} />
                 </TouchableOpacity>
               </View>
-            ) : (
+            ))}
+            {bills.length < MAX_BILLS ? (
               <TouchableOpacity
                 style={[styles.uploadTile, errors.bill && styles.fieldBad]}
                 onPress={attach}
@@ -379,19 +476,21 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
                 {uploading ? (
                   <>
                     <ActivityIndicator color={COLORS.primary} />
-                    <Text style={styles.uploadHint}>Uploading the bill…</Text>
+                    <Text style={styles.uploadHint}>Uploading…</Text>
                   </>
                 ) : (
                   <>
                     <View style={styles.uploadIcon}>
                       <MaterialIcons name="cloud-upload" size={22} color={COLORS.primary} />
                     </View>
-                    <Text style={styles.uploadTitle}>Tap to attach the bill</Text>
-                    <Text style={styles.uploadHint}>JPG or PNG · max 5 MB</Text>
+                    <Text style={styles.uploadTitle}>
+                      {bills.length ? 'Add another bill' : 'Tap to attach the bill'}
+                    </Text>
+                    <Text style={styles.uploadHint}>JPG or PNG · max 5 MB each · up to {MAX_BILLS}</Text>
                   </>
                 )}
               </TouchableOpacity>
-            )}
+            ) : null}
             {errors.bill ? <Text style={styles.fieldError}>{errors.bill}</Text> : null}
           </ScrollView>
 
@@ -441,6 +540,18 @@ function AddExpenseModal({ visible, types, onClose, onDone }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
 
+  /* header date filters — mirrors LeaveApprovalsScreen */
+  filterRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  filterField: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 11, paddingHorizontal: 10, paddingVertical: 9,
+  },
+  filterText: { flex: 1, color: '#fff', fontSize: 12.5, fontWeight: '700' },
+  clearRow: { alignItems: 'flex-end', marginTop: 6 },
+  clearBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingVertical: 2, paddingHorizontal: 4 },
+  clearText: { color: '#C7D2FE', fontSize: 11.5, fontWeight: '700' },
+  calCard: { backgroundColor: COLORS.card, borderRadius: RADIUS.sheet, padding: 16 },
+
   balRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   balCard: { flex: 1, padding: 14 },
   balTag: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
@@ -464,6 +575,7 @@ const styles = StyleSheet.create({
   pdfThumb: { backgroundColor: COLORS.redSoft, justifyContent: 'center', alignItems: 'center', gap: 2 },
   pdfThumbText: { fontSize: 8.5, fontWeight: '800', color: COLORS.red, letterSpacing: 0.2 },
   reqDetails: { flex: 1, fontSize: 12.5, color: '#374151', lineHeight: 18 },
+  billStrip: { marginTop: 10 },
   reviewNote: { fontSize: 11.5, color: COLORS.faint, marginTop: 8, fontWeight: '600' },
 
   /* add-expense sheet */
@@ -471,6 +583,10 @@ const styles = StyleSheet.create({
   sheet: {
     backgroundColor: COLORS.card, borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet,
     padding: 18, paddingBottom: 26,
+    // Never taller than the overlay it sits in — the form scrolls instead. A
+    // fixed pixel cap cannot do this: it is wrong on a short phone and leaves
+    // the sheet floating short of the top on a tall one.
+    maxHeight: '92%',
   },
   sheetHandle: { width: 42, height: 5, borderRadius: 3, backgroundColor: COLORS.line, alignSelf: 'center', marginBottom: 12 },
   sheetTitle: { fontSize: 16, fontWeight: '800', color: COLORS.ink, marginBottom: 12, textAlign: 'center' },

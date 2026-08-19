@@ -41,6 +41,11 @@ const PDF_RE = /\.pdf$/i;
 
 export default function Expenses() {
   const [month, setMonth] = useState(monthIST());
+  // Day-wise window. It stands in for the month on the server, so the month
+  // input is disabled while either bound is set rather than left showing a
+  // period that is not what the table lists.
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [status, setStatus] = useState('pending');
   const [userId, setUserId] = useState('');
   const [users, setUsers] = useState([]);
@@ -75,14 +80,19 @@ export default function Expenses() {
     setError('');
     const params = new URLSearchParams();
     if (status) params.set('status', status);
-    if (month) params.set('month', month);
+    // A picked day range replaces the month outright — sending both would let
+    // the month clamp a window the reviewer deliberately opened.
+    if (from || to) {
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+    } else if (month) params.set('month', month);
     if (userId) params.set('userId', userId);
     const qs = params.toString();
     apiGet(`/expenses/requests${qs ? `?${qs}` : ''}`)
       .then((r) => setRequests(r.requests || []))
       .catch((e) => setError(e.message || 'Failed to load expense claims'))
       .finally(() => setLoading(false));
-  }, [month, status, userId]);
+  }, [month, from, to, status, userId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -91,13 +101,16 @@ export default function Expenses() {
   // re-runs the list query but never this one.
   const loadSummary = useCallback(() => {
     const params = new URLSearchParams();
-    if (month) params.set('month', month);
+    if (from || to) {
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+    } else if (month) params.set('month', month);
     if (userId) params.set('userId', userId);
     const qs = params.toString();
     apiGet(`/expenses/requests${qs ? `?${qs}` : ''}`)
       .then((r) => setSummary(r.requests || []))
       .catch(() => setSummary(null));
-  }, [month, userId]);
+  }, [month, from, to, userId]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
@@ -140,9 +153,30 @@ export default function Expenses() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="w-48">
               <Field label="Month">
-                <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+                <Input
+                  type="month"
+                  value={month}
+                  disabled={!!(from || to)}
+                  title={from || to ? 'Clear the day range to filter by month' : undefined}
+                  onChange={(e) => setMonth(e.target.value)}
+                />
               </Field>
             </div>
+            <div className="w-44">
+              <Field label="From day">
+                <Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+              </Field>
+            </div>
+            <div className="w-44">
+              <Field label="To day">
+                <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+              </Field>
+            </div>
+            {(from || to) && (
+              <Button variant="ghost" onClick={() => { setFrom(''); setTo(''); }}>
+                Clear days
+              </Button>
+            )}
             <div className="min-w-[14rem]">
               <Field label="Employee">
                 <Select value={userId} onChange={(e) => setUserId(e.target.value)}>
@@ -228,7 +262,7 @@ export default function Expenses() {
                         <td className="max-w-[18rem] px-4 py-3 text-slate-500">
                           <span className="line-clamp-2">{r.details || '—'}</span>
                         </td>
-                        <td className="px-4 py-3"><BillCell path={r.billPath} /></td>
+                        <td className="px-4 py-3"><BillCells row={r} /></td>
                         <td className="whitespace-nowrap px-4 py-3 text-slate-600">{fmtDate(r.createdAt)}</td>
                         <td className="px-4 py-3">
                           <Badge tone={STATUS_TONE[r.status] || 'gray'}>{r.status}</Badge>
@@ -264,6 +298,21 @@ export default function Expenses() {
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+/* ====================================== Bills (one claim, several bills) */
+// `bills` is the current shape; `billPath` is still read so a row from an older
+// payload still shows its single attachment.
+function BillCells({ row }) {
+  const paths = Array.isArray(row.bills) && row.bills.length
+    ? row.bills
+    : [row.billPath].filter(Boolean);
+  if (paths.length === 0) return <span className="text-xs text-slate-400">No bill</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {paths.map((p) => <BillCell key={p} path={p} />)}
     </div>
   );
 }

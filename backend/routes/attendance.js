@@ -4,7 +4,7 @@ const fs = require('fs');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 // Standard paid working day. Required hours for a period = working days × this.
 // Single source of truth so web + mobile show the same target.
@@ -225,6 +225,15 @@ function dayWindowIST(dateStr) {
 }
 
 const dateOnlyUTC = (ymd) => new Date(ymd + 'T00:00:00.000Z');
+// Shape alone is not enough: new Date('2026-02-30T00:00:00Z') is not Invalid, it
+// rolls forward to 03-02 and would silently shift the window. Round-trip it.
+const ymdOrNull = (v) => {
+  const str = String(v || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return null;
+  const d = dateOnlyUTC(str);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10) === str ? str : null;
+};
 
 // Approved-leave day sets for a month: Map(userId -> Set('YYYY-MM-DD')) of the
 // non-Sunday days each user is on approved leave (clipped to the month).
@@ -799,6 +808,17 @@ router.get('/admin/corrections', requireRole(ADMIN), async (req, res) => {
     const where = {};
     if (['pending', 'approved', 'rejected', 'cancelled'].includes(req.query.status))
       where.status = req.query.status;
+    // Optional from/to window on the day being corrected. Either bound may stand
+    // alone; anything unparseable is ignored rather than 400ing, so a stray query
+    // string can never break the review queue.
+    let from = ymdOrNull(req.query.from);
+    let to = ymdOrNull(req.query.to);
+    if (from && to && from > to) { from = null; to = null; }
+    if (from || to) {
+      where.date = {};
+      if (from) where.date.gte = dateOnlyUTC(from);
+      if (to) where.date.lte = dateOnlyUTC(to);
+    }
     const requests = await prisma.attendanceCorrection.findMany({
       where,
       orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],

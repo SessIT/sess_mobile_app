@@ -1,8 +1,9 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { reclaimedLeaveDays } = require('../lib/leaveWorked');
 const router = express.Router();
-const ADMIN = 'Technical Director / Admin';
+const ADMIN = 'Admin';
 
 router.use(requireAuth);
 
@@ -78,13 +79,16 @@ const includeUser = {
 
 // Earned/used/available comp-off balance. Earned = approved credits (1 day
 // each); used = CO leave-request days (pending ones also hold the balance).
+// A CO day that was approved but then worked is given back — same rule as
+// every other leave type (see lib/leaveWorked.js).
 async function compBalance(userId, year) {
   const range = yearRange(year);
-  const [earned, coType] = await Promise.all([
+  const [earned, coType, reclaimed] = await Promise.all([
     prisma.compOffRequest.count({ where: { userId, status: 'approved', workDate: range } }),
     prisma.leaveType.findUnique({ where: { code: 'CO' } }),
+    reclaimedLeaveDays(userId, year),
   ]);
-  let used = 0, pending = 0;
+  let used = 0, pending = 0, back = 0;
   if (coType) {
     const reqs = await prisma.leaveRequest.findMany({
       where: { userId, leaveTypeId: coType.id, status: { in: ['approved', 'pending'] }, startDate: range },
@@ -94,8 +98,13 @@ async function compBalance(userId, year) {
       if (r.status === 'approved') used += r.days;
       else pending += r.days;
     }
+    back = reclaimed.byType.get(coType.id) || 0;
+    used = Math.max(Math.round((used - back) * 100) / 100, 0);
   }
-  return { earned, used, pending, available: Math.max(Math.round((earned - used - pending) * 100) / 100, 0) };
+  return {
+    earned, used, pending, reclaimed: back,
+    available: Math.max(Math.round((earned - used - pending) * 100) / 100, 0),
+  };
 }
 
 /* ==================== EMPLOYEE (SELF) ==================== */
