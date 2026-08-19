@@ -23,7 +23,18 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-font",
+      "expo-status-bar",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "newArchEnabled": false,
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ]
   }
 }
