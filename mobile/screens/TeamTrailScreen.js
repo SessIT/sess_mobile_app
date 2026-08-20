@@ -9,7 +9,7 @@ import { Calendar } from 'react-native-calendars';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Chip, PrimaryButton } from '../components/ui';
+import { GradientHeader, BottomNav, Chip, PrimaryButton , SheetOverlay} from '../components/ui';
 import { COLORS, RADIUS, SHADOW } from '../lib/theme';
 
 const GAP_MIN = 8; // 5-min capture interval → 8+ min illa-na gap flag
@@ -234,7 +234,7 @@ export default function TeamTrailScreen({ navigation }) {
 
       {/* ===== Employee dropdown modal ===== */}
       <Modal visible={empModal} transparent animationType="slide">
-        <View style={styles.sheetOverlay}>
+        <SheetOverlay>
           <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Select Employee</Text>
@@ -275,12 +275,12 @@ export default function TeamTrailScreen({ navigation }) {
               <Text style={styles.sheetCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       {/* ===== Calendar modal ===== */}
       <Modal visible={calModal} transparent animationType="fade">
-        <View style={styles.overlayCenter}>
+        <SheetOverlay center>
           <View style={styles.calCard}>
             <Text style={styles.sheetTitle}>Select Date</Text>
             <Calendar
@@ -303,7 +303,7 @@ export default function TeamTrailScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       <BottomNav navigation={navigation} active={null} />

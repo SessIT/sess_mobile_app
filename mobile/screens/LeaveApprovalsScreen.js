@@ -8,7 +8,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Calendar } from 'react-native-calendars';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip } from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip , SheetOverlay} from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -218,7 +218,7 @@ export default function LeaveApprovalsScreen({ navigation }) {
 
       {/* Employee dropdown */}
       <Modal visible={empModal} transparent animationType="slide" onRequestClose={() => setEmpModal(false)}>
-        <View style={styles.sheetOverlay}>
+        <SheetOverlay>
           <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Select Employee</Text>
@@ -254,12 +254,12 @@ export default function LeaveApprovalsScreen({ navigation }) {
               <Text style={styles.sheetCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       {/* From / To date picker */}
       <Modal visible={!!picking} transparent animationType="fade" onRequestClose={() => setPicking(null)}>
-        <View style={styles.overlayCenter}>
+        <SheetOverlay center>
           <View style={styles.calCard}>
             <Text style={styles.sheetTitle}>Select {picking === 'from' ? 'from' : 'to'} date</Text>
             <Calendar
@@ -283,7 +283,7 @@ export default function LeaveApprovalsScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       <BottomNav navigation={navigation} active={null} />
