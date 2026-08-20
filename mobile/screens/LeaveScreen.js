@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Calendar } from 'react-native-calendars';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip, PrimaryButton } from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton , SheetOverlay} from '../components/ui';
 import { COLORS, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -209,7 +209,7 @@ function ApplyLeaveModal({ visible, types, onClose, onDone }) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.sheetOverlay}>
+      <SheetOverlay>
         <View style={styles.sheet}>
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>Apply for Leave</Text>
@@ -270,11 +270,11 @@ function ApplyLeaveModal({ visible, types, onClose, onDone }) {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </SheetOverlay>
 
       {/* Date picker */}
       <Modal visible={!!picking} transparent animationType="fade" onRequestClose={() => setPicking(null)}>
-        <View style={styles.overlayCenter}>
+        <SheetOverlay center>
           <View style={styles.calCard}>
             <Text style={styles.sheetTitle}>Select {picking === 'from' ? 'start' : 'end'} date</Text>
             <Calendar
@@ -296,7 +296,7 @@ function ApplyLeaveModal({ visible, types, onClose, onDone }) {
               <Text style={styles.cancelBtnText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
     </Modal>
   );
