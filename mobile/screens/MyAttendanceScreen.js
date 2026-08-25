@@ -8,7 +8,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Calendar } from 'react-native-calendars';
 import { api, API_URL } from '../lib/api';
-import { GradientHeader, HeaderIconButton, BottomNav, Card, Chip } from '../components/ui';
+import { GradientHeader, HeaderIconButton, BottomNav, Card, Chip , SheetOverlay} from '../components/ui';
 import { COLORS, RADIUS, SHADOW } from '../lib/theme';
 
 const { width } = Dimensions.get('window');
@@ -464,7 +464,7 @@ export default function MyAttendanceScreen({ navigation }) {
 
       {/* Correction request modal */}
       <Modal visible={corrModal} transparent animationType="fade" onRequestClose={() => setCorrModal(false)}>
-        <View style={styles.corrOverlay}>
+        <SheetOverlay center>
           <View style={styles.corrCard}>
             <Text style={styles.corrTitle}>{isOffDay ? 'Add Attendance' : 'Attendance Correction'}</Text>
             <Text style={styles.corrSub}>{prettyDate(date)}</Text>
@@ -515,7 +515,7 @@ export default function MyAttendanceScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       <BottomNav navigation={navigation} active="profile" />

@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../lib/api';
-import { GradientHeader, HeaderIconButton, BottomNav } from '../components/ui';
+import { GradientHeader, HeaderIconButton, BottomNav , SheetOverlay} from '../components/ui';
 import { COLORS, RADIUS, SHADOW } from '../lib/theme';
 
 const initials = (n) => (n || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -168,7 +168,7 @@ export default function ChatListScreen({ navigation }) {
 
       {/* ---- New group modal ---- */}
       <Modal visible={groupModal} transparent animationType="slide" onRequestClose={() => setGroupModal(false)}>
-        <View style={styles.sheetOverlay}>
+        <SheetOverlay>
           <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>New Group</Text>
@@ -226,7 +226,7 @@ export default function ChatListScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       <BottomNav navigation={navigation} active="chat" />

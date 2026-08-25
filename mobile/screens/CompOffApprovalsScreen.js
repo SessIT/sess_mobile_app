@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip } from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip , SheetOverlay} from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -299,7 +299,7 @@ export default function CompOffApprovalsScreen({ navigation }) {
 
       {/* Employee dropdown */}
       <Modal visible={empModal} transparent animationType="slide" onRequestClose={() => setEmpModal(false)}>
-        <View style={styles.sheetOverlay}>
+        <SheetOverlay>
           <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Select Employee</Text>
@@ -335,7 +335,7 @@ export default function CompOffApprovalsScreen({ navigation }) {
               <Text style={styles.sheetCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       <BottomNav navigation={navigation} active={null} />

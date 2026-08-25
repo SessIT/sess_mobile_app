@@ -8,7 +8,7 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Calendar } from 'react-native-calendars';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip, PrimaryButton } from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton , SheetOverlay} from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -229,7 +229,7 @@ export default function OtApprovalsScreen({ navigation }) {
 
       {/* Employee dropdown */}
       <Modal visible={empModal} transparent animationType="slide" onRequestClose={() => setEmpModal(false)}>
-        <View style={styles.sheetOverlay}>
+        <SheetOverlay>
           <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Select Employee</Text>
@@ -265,7 +265,7 @@ export default function OtApprovalsScreen({ navigation }) {
               <Text style={styles.sheetCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       <AddOtModal
@@ -345,7 +345,7 @@ function AddOtModal({ visible, onClose, onDone }) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.sheetOverlay}>
+      <SheetOverlay>
         <View style={styles.sheet}>
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>Add OT · individual or group</Text>
@@ -411,11 +411,11 @@ function AddOtModal({ visible, onClose, onDone }) {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </SheetOverlay>
 
       {/* Date picker */}
       <Modal visible={picking} transparent animationType="fade" onRequestClose={() => setPicking(false)}>
-        <View style={styles.overlayCenter}>
+        <SheetOverlay center>
           <View style={styles.calCard}>
             <Text style={styles.sheetTitle}>Select OT date</Text>
             <Calendar
@@ -428,7 +428,7 @@ function AddOtModal({ visible, onClose, onDone }) {
               <Text style={styles.cancelBtnText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
     </Modal>
   );

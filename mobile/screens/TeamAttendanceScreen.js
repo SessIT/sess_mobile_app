@@ -10,7 +10,7 @@ import { Calendar } from 'react-native-calendars';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, SectionLabel } from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, SectionLabel , SheetOverlay} from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS, SHADOW } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -688,7 +688,7 @@ export default function TeamAttendanceScreen({ navigation }) {
 
       {/* Employee dropdown */}
       <Modal visible={empModal} transparent animationType="slide">
-        <View style={styles.sheetOverlay}>
+        <SheetOverlay>
           <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Select Employee</Text>
@@ -724,12 +724,12 @@ export default function TeamAttendanceScreen({ navigation }) {
               <Text style={styles.sheetCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       {/* Calendar (corrections from/to) */}
       <Modal visible={!!corrCal} transparent animationType="fade" onRequestClose={() => setCorrCal(null)}>
-        <View style={styles.overlayCenter}>
+        <SheetOverlay center>
           <View style={styles.calCard}>
             <Text style={styles.sheetTitle}>{corrCal === 'to' ? 'To Date' : 'From Date'}</Text>
             <Calendar
@@ -760,12 +760,12 @@ export default function TeamAttendanceScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       {/* Calendar (day mode) */}
       <Modal visible={calModal} transparent animationType="fade">
-        <View style={styles.overlayCenter}>
+        <SheetOverlay center>
           <View style={styles.calCard}>
             <Text style={styles.sheetTitle}>Select Date</Text>
             <Calendar
@@ -783,12 +783,12 @@ export default function TeamAttendanceScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       {/* Manage sessions for one employee */}
       <Modal visible={!!manage} transparent animationType="slide" onRequestClose={() => setManage(null)}>
-        <View style={styles.sheetOverlay}>
+        <SheetOverlay>
           <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>{manage?.fullName || manage?.username}</Text>
@@ -826,12 +826,12 @@ export default function TeamAttendanceScreen({ navigation }) {
               <Text style={styles.sheetCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       {/* Session editor (create / edit) */}
       <Modal visible={!!editor} transparent animationType="fade" onRequestClose={() => setEditor(null)}>
-        <View style={styles.overlayCenter}>
+        <SheetOverlay center>
           <View style={styles.calCard}>
             <Text style={styles.sheetTitle}>{editor?.mode === 'edit' ? 'Edit Attendance' : 'Add Attendance'}</Text>
             <Text style={styles.manageSub}>{editor?.userName} • {editor?.date}</Text>
@@ -863,7 +863,7 @@ export default function TeamAttendanceScreen({ navigation }) {
               <PrimaryButton title="Save" style={{ flex: 1 }} busy={savingEditor} onPress={saveEditor} />
             </View>
           </View>
-        </View>
+        </SheetOverlay>
       </Modal>
 
       <BottomNav navigation={navigation} active={null} />

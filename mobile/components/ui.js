@@ -1,7 +1,7 @@
 // Shared UI building blocks for the SESS HR redesign (SESS_MOBILE_APP_UI.pdf).
 // Every screen composes these so headers, cards and the tab bar stay identical.
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -202,3 +202,29 @@ const styles = StyleSheet.create({
   upBadgeText: { color: COLORS.orange, fontSize: 10.5, fontWeight: '800', letterSpacing: 0.6 },
   upNote: { fontSize: 13, color: COLORS.sub, textAlign: 'center', marginTop: 12, lineHeight: 19 },
 });
+
+/* Bottom sheet backdrop that lifts above the keyboard.
+ *
+ * RN <Modal> is a separate Android window, so app.json's
+ * softwareKeyboardLayoutMode:"resize" does not reach inside it — a sheet
+ * pinned with justifyContent:'flex-end' stays put and the IME covers it.
+ * KeyboardAvoidingView inside the Modal is what actually moves it.
+ *
+ * Drop-in for  <View style={styles.sheetOverlay}>  inside a <Modal>.
+ * Pass center for centred cards (styles.overlayCenter). */
+export function SheetOverlay({ children, center = false, style }) {
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={[
+        { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)' },
+        center
+          ? { justifyContent: 'center', padding: 20 }
+          : { justifyContent: 'flex-end' },
+        style,
+      ]}
+    >
+      {children}
+    </KeyboardAvoidingView>
+  );
+}
