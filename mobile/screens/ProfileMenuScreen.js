@@ -35,6 +35,7 @@ const ADMIN_TILES = [
   { key: 'coappr', label: 'Comp-Off Approvals', icon: 'redeem', screen: 'CompOffApprovals' },
   { key: 'expappr', label: 'Expense Approvals', icon: 'receipt-long', screen: 'ExpenseApprovals' },
   { key: 'leavepolicy', label: 'Leave Policy', icon: 'rule', screen: 'LeavePolicy' },
+  { key: 'sites', label: 'Customer Sites', icon: 'place', screen: 'Sites' },
   { key: 'sendnote', label: 'Send Note', icon: 'campaign', screen: 'SendNote' },
 ];
 

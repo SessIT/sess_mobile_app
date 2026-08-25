@@ -32,6 +32,7 @@ import NotesScreen from './screens/NotesScreen';
 import SendNoteScreen from './screens/SendNoteScreen';
 import MoreSettingsScreen from './screens/MoreSettingsScreen';
 import LegalScreen from './screens/LegalScreen';
+import SitesScreen from './screens/SitesScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -94,6 +95,7 @@ export default function App() {
         <Stack.Screen name="CompOffApprovals" component={CompOffApprovalsScreen} />
         <Stack.Screen name="Expense" component={ExpenseScreen} />
         <Stack.Screen name="ExpenseApprovals" component={ExpenseApprovalsScreen} />
+        <Stack.Screen name="Sites" component={SitesScreen} />
         <Stack.Screen name="TaskList" component={TaskListScreen} />
         <Stack.Screen name="Notes" component={NotesScreen} />
         <Stack.Screen name="SendNote" component={SendNoteScreen} />

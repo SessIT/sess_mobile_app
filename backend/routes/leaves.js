@@ -120,6 +120,50 @@ router.get('/types', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
+// POST /api/leaves/types (admin) — add a custom category, e.g. { code:'ML', name:'Marriage Leave' }.
+// A previously removed code is reactivated (with the new name) instead of
+// duplicated, so any history recorded under it lines up again. The response
+// carries this year's quota (an optional `year` in the body picks the year) so
+// the policy screen can splice the type in without refetching.
+router.post('/types', requireRole(ADMIN), async (req, res) => {
+  try {
+    const code = String(req.body?.code || '').trim().toUpperCase();
+    const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    if (!/^[A-Z]{2,5}$/.test(code))
+      return res.status(400).json({ message: 'Code must be 2–5 letters, e.g. ML' });
+    if (!name)
+      return res.status(400).json({ message: 'Enter the leave type name' });
+    await ensureTypes();
+    const existing = await prisma.leaveType.findUnique({ where: { code } });
+    if (existing && existing.active)
+      return res.status(409).json({ message: `${code} already exists (${existing.name})` });
+    const type = existing
+      ? await prisma.leaveType.update({ where: { id: existing.id }, data: { name, active: true } })
+      : await prisma.leaveType.create({ data: { code, name } });
+    const year = intYear(req.body?.year);
+    const pol = await prisma.leavePolicy.findUnique({
+      where: { year_leaveTypeId: { year, leaveTypeId: type.id } },
+    });
+    res.status(201).json({ ...type, year, quota: pol?.quota ?? 0 });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// DELETE /api/leaves/types/:id (admin) — remove a CUSTOM category. The built-in
+// four are load-bearing (CO especially — comp-off credits land on it), so they
+// cannot be removed. Soft delete: the row is only deactivated, past requests
+// keep their type, and re-adding the same code brings it back.
+router.delete('/types/:id', requireRole(ADMIN), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const type = id ? await prisma.leaveType.findUnique({ where: { id } }) : null;
+    if (!type || !type.active) return res.status(404).json({ message: 'Leave type not found' });
+    if (DEFAULT_TYPES.some((t) => t.code === type.code))
+      return res.status(400).json({ message: `${type.code} is built-in and cannot be removed` });
+    await prisma.leaveType.update({ where: { id }, data: { active: false } });
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
 // GET /api/leaves/policy?year=YYYY — annual allocation per type
 router.get('/policy', async (req, res) => {
   try {
@@ -135,7 +179,12 @@ router.get('/policy', async (req, res) => {
       // CO is excluded — comp-off balance is earned per approved credit, not allocated.
       allocations: types
         .filter((t) => t.code !== CO)
-        .map((t) => ({ leaveTypeId: t.id, code: t.code, name: t.name, quota: map.get(t.id) ?? 0 })),
+        .map((t) => ({
+          leaveTypeId: t.id, code: t.code, name: t.name,
+          // Custom (non-seeded) types can be removed from the policy screen.
+          builtin: DEFAULT_TYPES.some((d) => d.code === t.code),
+          quota: map.get(t.id) ?? 0,
+        })),
     });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
