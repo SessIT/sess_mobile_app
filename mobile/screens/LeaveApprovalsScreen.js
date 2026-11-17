@@ -8,7 +8,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Calendar } from 'react-native-calendars';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip , SheetOverlay} from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, SheetOverlay, ManagerStage } from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -189,6 +189,7 @@ export default function LeaveApprovalsScreen({ navigation }) {
                     <View style={styles.daysPill}><Text style={styles.daysText}>{r.days} day{r.days === 1 ? '' : 's'}</Text></View>
                   </View>
                   {r.reason ? <Text style={styles.reason}>“{r.reason}”</Text> : null}
+                  <ManagerStage stage={r.managerStage} />
 
                   {r.status === 'pending' && (
                     <View style={styles.actions}>

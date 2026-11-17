@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Calendar } from 'react-native-calendars';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip, PrimaryButton , SheetOverlay} from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, SheetOverlay, ManagerStage } from '../components/ui';
 import { COLORS, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -42,7 +42,7 @@ function PunchLine({ punch }) {
       <MaterialIcons name={ok ? 'check-circle' : 'warning-amber'} size={14} color={ok ? COLORS.green : COLORS.orange} />
       <Text style={[styles.punchText, { color: ok ? COLORS.green : COLORS.orange }]}>
         {fmtTime(punch.firstIn)} → {punch.lastOut ? fmtTime(punch.lastOut) : 'no punch-out'}
-        {ok ? ' · full day' : ' · short of 9:30–6:30'}
+        {ok ? ' · full day' : ` · short of ${punch.requiredIn || '09:30'}–${punch.requiredOut || '18:30'}`}
       </Text>
     </View>
   );
@@ -127,7 +127,7 @@ export default function CompOffScreen({ navigation }) {
           />
           <Text style={styles.helpText}>
             Approved credits appear as CO balance in My Leave — apply there to take the day off.
-            You must have punched in/out on the worked day (full day is 9:30 AM – 6:30 PM).
+            You must have punched in/out on the worked day for your full shift.
           </Text>
 
           <Text style={styles.sectionTitle}>My Credits · {CUR_YEAR}</Text>
@@ -148,8 +148,9 @@ export default function CompOffScreen({ navigation }) {
                     <Text style={styles.reqDate}>{prettyDate(r.workDate)}</Text>
                     {r.reason ? <Text style={styles.reqReason} numberOfLines={2}>{r.reason}</Text> : null}
                     <PunchLine punch={r.punch} />
+                    <ManagerStage stage={r.managerStage} />
                     {(r.status === 'rejected' || r.status === 'revoked') && r.reviewNote ? (
-                      <Text style={styles.reqNote}>Admin: {r.reviewNote}</Text>
+                      <Text style={styles.reqNote}>{r.managerStage?.state === 'rejected' ? 'Manager' : 'Admin'}: {r.reviewNote}</Text>
                     ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end', gap: 6 }}>
@@ -237,7 +238,7 @@ function RequestCompOffModal({ visible, onClose, onDone }) {
               <MaterialIcons name="expand-more" size={20} color={COLORS.faint} style={{ marginLeft: 'auto' }} />
             </TouchableOpacity>
             <Text style={styles.hint}>
-              Only a Sunday or a company holiday you actually worked (punched in/out) qualifies.
+              Only your week-off day or a company holiday you actually worked (punched in/out) qualifies.
             </Text>
 
             <Text style={styles.fieldLabel}>WHAT WORK DID YOU DO?</Text>

@@ -22,8 +22,17 @@ const EXT_BY_MIME = {
   'image/gif': '.gif', 'image/heic': '.heic',
 };
 const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic'];
-const extOf = (file) =>
-  EXT_BY_MIME[file.mimetype] || path.extname(file.originalname || '').toLowerCase().slice(0, 6);
+// Allowlisted extensions only — a client-supplied .svg/.html name must never
+// reach disk, because the extension decides what a browser executes. SVG is a
+// scriptable document, not a photo, and is refused outright.
+const extOf = (file) => {
+  const mime = String(file.mimetype || '').trim().toLowerCase();
+  if (EXT_BY_MIME[mime]) return EXT_BY_MIME[mime];
+  const e = path.extname(file.originalname || '').toLowerCase();
+  if (IMAGE_EXT.includes(e)) return e;
+  if (/^image\//.test(mime) && mime !== 'image/svg+xml') return '.jpg';
+  return null;
+};
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -33,7 +42,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
   fileFilter: (req, file, cb) => {
     // Photos only — a note is not a media gallery.
-    if (/^image\//.test(file.mimetype) || IMAGE_EXT.includes(extOf(file))) return cb(null, true);
+    if (extOf(file)) return cb(null, true);
     cb(new Error('Only photos can be attached to a note'));
   },
 });

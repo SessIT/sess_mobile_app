@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { cx } from './ui';
+import NotificationBell from './NotificationBell';
+import { navFor } from './nav';
 import {
   IconLayoutDashboard,
   IconUsers,
@@ -10,34 +12,28 @@ import {
   IconGift,
   IconLeave,
   IconClock,
+  IconTimer,
   IconSparkles,
   IconMapPin,
   IconChart,
   IconChat,
   IconLogOut,
   IconChevronLeft,
+  IconCheckCircle,
+  IconMegaphone,
+  IconLifebuoy,
+  IconFolder,
+  IconBox,
+  IconDoorExit,
 } from './icons';
 
-const NAV = [
-  { to: '/', label: 'Dashboard', icon: IconLayoutDashboard, end: true },
-  { to: '/users', label: 'User Management', icon: IconUsers },
-  { to: '/attendance', label: 'Team Attendance', icon: IconCalendar },
-  { to: '/trail', label: 'Team Trail', icon: IconMap },
-  { to: '/holidays', label: 'Holidays', icon: IconGift },
-  { to: '/leaves', label: 'Leave Management', icon: IconLeave },
-  { to: '/overtime', label: 'Overtime', icon: IconClock },
-  { to: '/compoff', label: 'Comp-Off', icon: IconSparkles },
-  { to: '/expenses', label: 'Expenses', icon: IconChart },
-  { to: '/sites', label: 'Customer Sites', icon: IconMapPin },
-  // { to: '/reports', label: 'Reports', icon: IconChart },
-  { to: '/chat', label: 'Team Chat', icon: IconChat },
-];
 
 const COLLAPSE_KEY = 'sess_sidebar_collapsed';
 
 export default function Layout() {
-  const { auth, logout } = useAuth();
+  const { auth, logout, can, isManager } = useAuth();
   const navigate = useNavigate();
+  const nav = navFor({ can, isManager });
 
   // Collapsed state persists across reloads so the admin's preference sticks.
   const [collapsed, setCollapsed] = useState(() => {
@@ -113,7 +109,11 @@ export default function Layout() {
         )}
 
         <nav className={cx('flex-1 space-y-1 overflow-y-auto py-2', collapsed ? 'px-2' : 'px-3')}>
-          {NAV.map(({ to, label, icon: Icon, end }) => (
+          {nav.map(({ to, label, icon: Icon, end, group }) => (
+            <div key={to}>
+            {group && !collapsed && (
+              <p className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-widest text-brand-300/50">{group}</p>
+            )}
             <NavLink
               key={to}
               to={to}
@@ -142,6 +142,7 @@ export default function Layout() {
                 </>
               )}
             </NavLink>
+            </div>
           ))}
         </nav>
 
@@ -160,6 +161,7 @@ export default function Layout() {
               >
                 {initials}
               </div>
+              <NotificationBell panelClass="fixed bottom-4 left-24" />
               <button
                 onClick={onLogout}
                 title="Sign out"
@@ -177,8 +179,9 @@ export default function Layout() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-white truncate">{auth?.fullName || 'Admin'}</p>
-                  <p className="truncate text-[11px] text-brand-200/70">{auth?.roles?.[0] || 'Administrator'}</p>
+                  <p className="truncate text-[11px] text-brand-200/70">{auth?.roles?.[0] || (auth?.isManager ? 'Reporting manager' : 'Administrator')}</p>
                 </div>
+                <NotificationBell panelClass="fixed bottom-4 left-[17rem]" />
               </div>
               <button
                 onClick={onLogout}
@@ -202,15 +205,18 @@ export default function Layout() {
             </div>
             <span className="font-bold">SESS Admin</span>
           </div>
-          <button onClick={onLogout} className="flex items-center gap-1.5 text-sm font-medium text-brand-100">
-            <IconLogOut className="w-4 h-4" />
-            Sign out
-          </button>
+          <div className="flex items-center gap-2">
+            <NotificationBell panelClass="right-0 top-full mt-2" />
+            <button onClick={onLogout} className="flex items-center gap-1.5 text-sm font-medium text-brand-100">
+              <IconLogOut className="w-4 h-4" />
+              Sign out
+            </button>
+          </div>
         </header>
 
         {/* Mobile nav strip */}
         <nav className="flex gap-1 px-2 py-2 overflow-x-auto border-b border-slate-200 bg-white/80 backdrop-blur md:hidden">
-          {NAV.map(({ to, label, icon: Icon, end }) => (
+          {nav.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}

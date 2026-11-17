@@ -24,24 +24,29 @@ const EXT_BY_MIME = {
 
 const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic'];
 const VIDEO_EXT = ['.mp4', '.mov', '.webm', '.3gp', '.mkv'];
-const extOf = (file) =>
-  EXT_BY_MIME[file.mimetype] || path.extname(file.originalname || '').toLowerCase().slice(0, 6);
+// The stored extension decides what a browser executes, so it must come from
+// an allowlist — never raw from originalname (an .svg or .html upload would be
+// stored-XSS). Unknown image/video subtypes (e.g. image/jpg from odd pickers)
+// get a safe default for their family; SVG is a scriptable document, not a
+// photo, and is refused outright.
+const extOf = (file) => {
+  const mime = String(file.mimetype || '').trim().toLowerCase();
+  if (EXT_BY_MIME[mime]) return EXT_BY_MIME[mime];
+  const e = path.extname(file.originalname || '').toLowerCase();
+  if (IMAGE_EXT.includes(e) || VIDEO_EXT.includes(e)) return e;
+  if (/^image\//.test(mime) && mime !== 'image/svg+xml') return '.jpg';
+  if (/^video\//.test(mime)) return '.mp4';
+  return null;
+};
 
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, CHAT_DIR),
-    filename: (req, file, cb) => {
-      const ext = extOf(file) || '.bin';
-      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
-    },
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extOf(file) || '.bin'}`),
   }),
   limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
   fileFilter: (req, file, cb) => {
-    // Accept by mimetype, or by filename extension when the client sends a
-    // generic type (some phones upload as application/octet-stream).
-    const ext = extOf(file);
-    if (/^(image|video)\//.test(file.mimetype) || IMAGE_EXT.includes(ext) || VIDEO_EXT.includes(ext))
-      return cb(null, true);
+    if (extOf(file)) return cb(null, true);
     cb(new Error('Only photos and videos can be shared'));
   },
 });

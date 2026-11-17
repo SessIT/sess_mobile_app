@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
+const { isManager } = require('../lib/team');
 const router = express.Router();
 
 router.get('/', requireAuth, async (req, res) => {
@@ -9,7 +10,9 @@ router.get('/', requireAuth, async (req, res) => {
     select: { id: true, username: true, fullName: true, isActive: true, createdAt: true },
   });
   if (!user || !user.isActive) return res.status(401).json({ message: 'User not found' });
-  res.json({ ...user, roles: req.user.roles });
+  // Live roles / permissions / manager flag so the apps can refresh menus
+  // without a new login.
+  res.json({ ...user, roles: req.user.roles, permissions: req.user.perms || [], isManager: await isManager(user.id) });
 });
 
 /* ---------------- Self-service profile ----------------

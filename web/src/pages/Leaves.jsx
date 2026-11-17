@@ -16,6 +16,8 @@ import {
   Modal,
   Spinner,
   cx,
+  ManagerStage,
+  confirmSkipManager,
 } from '../components/ui';
 import { IconLeave, IconCheckCircle, IconBan, IconCalendar, IconPlus, IconTrash } from '../components/icons';
 
@@ -87,6 +89,7 @@ function RequestsTab({ year }) {
   useEffect(() => { load(); }, [load]);
 
   const decide = async (r, decision) => {
+    if (decision === 'approved' && !confirmSkipManager(r)) return;
     let reviewNote = '';
     if (decision === 'rejected') {
       reviewNote = window.prompt('Reason for rejection (optional):', '') ?? '';
@@ -168,6 +171,7 @@ function RequestsTab({ year }) {
                       </td>
                       <td className="px-4 py-3">
                         <Badge tone={STATUS_TONE[r.status] || 'gray'}>{r.status}</Badge>
+                        <div className="mt-1"><ManagerStage stage={r.managerStage} /></div>
                         {r.status === 'rejected' && r.reviewNote && (
                           <p className="mt-1 max-w-[12rem] text-xs text-slate-400">{r.reviewNote}</p>
                         )}
@@ -410,6 +414,7 @@ function MyLeaveTab({ year }) {
                         <td className="max-w-[16rem] px-4 py-3 text-slate-500"><span className="line-clamp-2">{r.reason || '—'}</span></td>
                         <td className="px-4 py-3">
                           <Badge tone={STATUS_TONE[r.status] || 'gray'}>{r.status}</Badge>
+                          <div className="mt-1"><ManagerStage stage={r.managerStage} /></div>
                           {r.status === 'rejected' && r.reviewNote && (
                             <p className="mt-1 max-w-[12rem] text-xs text-slate-400">{r.reviewNote}</p>
                           )}

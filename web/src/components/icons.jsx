@@ -237,3 +237,38 @@ export const IconRadio = (p) => (
     <path d="M5 5a11.31 11.31 0 0 0 0 14M19 19a11.31 11.31 0 0 0 0-14" />
   </Svg>
 );
+
+export const IconMegaphone = (p) => (
+  <Svg {...p}>
+    <path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z" />
+    <path d="M15 9a3 3 0 0 1 0 6M18 6a7 7 0 0 1 0 12" />
+  </Svg>
+);
+
+export const IconLifebuoy = (p) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="4" />
+    <path d="M5.6 5.6l3.6 3.6M14.8 14.8l3.6 3.6M18.4 5.6l-3.6 3.6M9.2 14.8l-3.6 3.6" />
+  </Svg>
+);
+
+export const IconBox = (p) => (
+  <Svg {...p}>
+    <path d="M21 8l-9-5-9 5 9 5 9-5z" />
+    <path d="M3 8v8l9 5 9-5V8M12 13v8" />
+  </Svg>
+);
+
+export const IconFolder = (p) => (
+  <Svg {...p}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+  </Svg>
+);
+
+export const IconDoorExit = (p) => (
+  <Svg {...p}>
+    <path d="M13 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h7" />
+    <path d="M16 8l4 4-4 4M20 12H10" />
+  </Svg>
+);

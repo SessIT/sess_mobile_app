@@ -7,12 +7,11 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Calendar } from 'react-native-calendars';
-import { api, API_URL } from '../lib/api';
+import { api, fileUrl } from '../lib/api';
 import { GradientHeader, HeaderIconButton, BottomNav, Card, Chip , SheetOverlay} from '../components/ui';
 import { COLORS, RADIUS, SHADOW } from '../lib/theme';
 
 const { width } = Dimensions.get('window');
-const BASE = API_URL.replace('/api', '');
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const thisMonth = () => todayYMD().slice(0, 7);
@@ -237,7 +236,7 @@ export default function MyAttendanceScreen({ navigation }) {
             <Text style={[styles.photoLabel, { color: COLORS.green }]}>IN  {fmtT(s.punchInTime)}</Text>
           </View>
           {s.punchInPhoto ? (
-            <Image source={{ uri: `${BASE}/${s.punchInPhoto}` }} style={styles.photo} />
+            <Image source={{ uri: fileUrl(s.punchInPhoto) }} style={styles.photo} />
           ) : (
             <View style={[styles.photo, styles.photoEmpty]}>
               <MaterialIcons name="no-photography" size={28} color="#D1D5DB" />
@@ -250,7 +249,7 @@ export default function MyAttendanceScreen({ navigation }) {
             <Text style={[styles.photoLabel, { color: COLORS.red }]}>OUT  {fmtT(s.punchOutTime)}</Text>
           </View>
           {s.punchOutPhoto ? (
-            <Image source={{ uri: `${BASE}/${s.punchOutPhoto}` }} style={styles.photo} />
+            <Image source={{ uri: fileUrl(s.punchOutPhoto) }} style={styles.photo} />
           ) : (
             <View style={[styles.photo, styles.photoEmpty]}>
               <MaterialIcons name="schedule" size={28} color="#D1D5DB" />
@@ -373,7 +372,8 @@ export default function MyAttendanceScreen({ navigation }) {
                   dayStatus.status === 'holiday' ? 'Holiday' :
                   dayStatus.status === 'leave' ? 'Paid Leave' :
                   dayStatus.status === 'absent' ? 'Absent' :
-                  dayStatus.status === 'weekoff' ? 'Week Off' : 'Upcoming'}
+                  dayStatus.status === 'weekoff' ? 'Week Off' :
+                  dayStatus.status === 'na' ? 'Not employed' : 'Upcoming'}
                 color={dayStatus.status === 'present' ? COLORS.green :
                   dayStatus.status === 'holiday' ? COLORS.teal :
                   dayStatus.status === 'leave' ? COLORS.purple :
@@ -405,13 +405,13 @@ export default function MyAttendanceScreen({ navigation }) {
               <View style={[styles.infoIconWrap, {
                 backgroundColor: dayStatus?.status === 'holiday' ? COLORS.tealSoft :
                   dayStatus?.status === 'leave' ? COLORS.purpleSoft :
-                  dayStatus?.status === 'weekoff' ? '#F3F4F6' :
+                  dayStatus?.status === 'weekoff' || dayStatus?.status === 'na' ? '#F3F4F6' :
                   dayStatus?.status === 'future' ? COLORS.indigoSoft : COLORS.redSoft,
               }]}>
                 <MaterialIcons
-                  name={dayStatus?.status === 'holiday' ? 'celebration' : dayStatus?.status === 'leave' ? 'beach-access' : dayStatus?.status === 'weekoff' ? 'weekend' : dayStatus?.status === 'future' ? 'schedule' : 'person-off'}
+                  name={dayStatus?.status === 'holiday' ? 'celebration' : dayStatus?.status === 'leave' ? 'beach-access' : dayStatus?.status === 'weekoff' ? 'weekend' : dayStatus?.status === 'future' || dayStatus?.status === 'na' ? 'schedule' : 'person-off'}
                   size={32}
-                  color={dayStatus?.status === 'holiday' ? COLORS.teal : dayStatus?.status === 'leave' ? COLORS.purple : dayStatus?.status === 'weekoff' ? COLORS.sub : dayStatus?.status === 'future' ? COLORS.sub : COLORS.red}
+                  color={dayStatus?.status === 'holiday' ? COLORS.teal : dayStatus?.status === 'leave' ? COLORS.purple : ['weekoff', 'future', 'na'].includes(dayStatus?.status) ? COLORS.sub : COLORS.red}
                 />
               </View>
               <Text style={styles.infoTitle}>
@@ -419,6 +419,7 @@ export default function MyAttendanceScreen({ navigation }) {
                   : dayStatus?.status === 'leave' ? 'Paid Leave'
                   : dayStatus?.status === 'weekoff' ? 'Week Off'
                   : dayStatus?.status === 'future' ? 'Upcoming Date'
+                  : dayStatus?.status === 'na' ? 'Not Employed'
                   : 'Absent'}
               </Text>
               <Text style={styles.infoSub}>
@@ -426,6 +427,7 @@ export default function MyAttendanceScreen({ navigation }) {
                   : dayStatus?.status === 'leave' ? 'Approved paid leave — counted in your effort hours'
                   : dayStatus?.status === 'weekoff' ? 'Enjoy your day off! 🎉'
                   : dayStatus?.status === 'future' ? 'Attendance will be recorded on this day'
+                  : dayStatus?.status === 'na' ? 'Before your joining date — not counted as absent'
                   : 'No attendance records found for this date'}
               </Text>
             </Card>
@@ -447,7 +449,10 @@ export default function MyAttendanceScreen({ navigation }) {
                   color={dateCorrection.status === 'approved' ? COLORS.green : COLORS.orange}
                 />
                 <Text style={[styles.corrStatusText, { color: dateCorrection.status === 'approved' ? '#166534' : '#92400E' }]}>
-                  Correction {dateCorrection.status === 'approved' ? 'approved' : 'pending with HR'} for this day
+                  Correction {dateCorrection.status === 'approved' ? 'approved'
+                    : dateCorrection.managerStage?.state === 'awaiting' ? 'pending with your manager'
+                    : dateCorrection.managerStage?.state === 'approved' ? 'manager-approved, pending with HR'
+                    : 'pending with HR'} for this day
                 </Text>
               </View>
             ) : (

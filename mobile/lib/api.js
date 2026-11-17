@@ -1,9 +1,25 @@
 import { getAuth } from './auth';
 
-export const API_URL = 'http://54.92.134.237:5000/api';
+export const API_URL = 'http://192.168.68.114:4000/api';
+
+// /uploads is authenticated now, but <Image> tags can't send headers — file
+// URLs carry the token as ?t= instead. getAuth() is async (SecureStore) while
+// render is sync, so the last token seen by api()/apiUpload() is cached here;
+// any screen showing uploaded files has always fetched its data first.
+let cachedToken = null;
+const FILE_BASE = API_URL.replace(/\/api\/?$/, '');
+
+/** Turn a stored path ("uploads/attendance/u1.jpg") into a fetchable URL. */
+export function fileUrl(p) {
+  if (!p) return null;
+  if (/^https?:\/\//i.test(p)) return p;
+  const base = `${FILE_BASE}/${String(p).replace(/^\/+/, '')}`;
+  return cachedToken ? `${base}?t=${encodeURIComponent(cachedToken)}` : base;
+}
 
 export async function api(path, options = {}) {
   const auth = await getAuth();
+  cachedToken = auth?.accessToken || cachedToken;
 
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -36,6 +52,7 @@ function httpError(status, message) {
 
 export async function apiUpload(path, formData) {
   const auth = await getAuth();
+  cachedToken = auth?.accessToken || cachedToken;
 
   const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',

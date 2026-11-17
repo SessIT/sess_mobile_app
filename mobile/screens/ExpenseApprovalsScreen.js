@@ -7,12 +7,11 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Calendar } from 'react-native-calendars';
-import { api, API_URL } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip } from '../components/ui';
+import { api, fileUrl } from '../lib/api';
+import { GradientHeader, BottomNav, Card, Chip, ManagerStage } from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 import { useKeyboard } from '../lib/useKeyboard';
 
-const BASE = API_URL.replace('/api', '');
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const thisMonth = () => todayYMD().slice(0, 7);
@@ -114,7 +113,7 @@ export default function ExpenseApprovalsScreen({ navigation }) {
   // The in-app viewer only knows how to draw images, so a PDF bill is handed to
   // whatever the reviewer's phone uses to read PDFs.
   const openBill = (billPath) => {
-    const url = `${BASE}/${billPath}`;
+    const url = fileUrl(billPath);
     if (isPdfBill(billPath)) {
       Linking.openURL(url).catch(() => Alert.alert('Cannot open', 'No app on this phone can open a PDF bill.'));
       return;
@@ -275,13 +274,14 @@ export default function ExpenseApprovalsScreen({ navigation }) {
                               <Text style={styles.pdfThumbText}>PDF bill</Text>
                             </View>
                           ) : (
-                            <Image source={{ uri: `${BASE}/${b}` }} style={styles.thumb} resizeMode="cover" />
+                            <Image source={{ uri: fileUrl(b) }} style={styles.thumb} resizeMode="cover" />
                           )}
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
                   ) : null}
 
+                  <ManagerStage stage={r.managerStage} />
                   {r.status !== 'pending' && r.reviewedBy ? (
                     <Text style={styles.reviewLine}>
                       {st.label} by {r.reviewedBy.fullName || r.reviewedBy.username}

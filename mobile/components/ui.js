@@ -92,6 +92,21 @@ export function Chip({ text, color = COLORS.primary, soft = COLORS.indigoSoft, i
   );
 }
 
+/* First-level (reporting manager) stage of a request — server `managerStage`.
+ * Renders nothing when there is no manager or the admin decided directly. */
+export function ManagerStage({ stage, style }) {
+  if (!stage || stage.state === 'none' || stage.state === 'skipped') return null;
+  const who = stage.by || stage.manager || 'manager';
+  const map = {
+    awaiting: { icon: 'hourglass-top', color: COLORS.orange, soft: COLORS.orangeSoft, text: `Awaiting manager · ${stage.manager || ''}`.trim() },
+    approved: { icon: 'verified', color: COLORS.green, soft: COLORS.greenSoft, text: `Manager approved · ${who}` },
+    rejected: { icon: 'block', color: COLORS.red, soft: COLORS.redSoft, text: `Manager rejected · ${who}` },
+  };
+  const m = map[stage.state];
+  if (!m) return null;
+  return <Chip text={m.text} icon={m.icon} color={m.color} soft={m.soft} style={[{ marginTop: 6 }, style]} />;
+}
+
 /* Full-width primary action button (indigo by default, pass color for green punch). */
 export function PrimaryButton({ title, icon, onPress, busy = false, disabled = false, colors, style }) {
   const grad = colors || [COLORS.primaryLight, COLORS.primary];

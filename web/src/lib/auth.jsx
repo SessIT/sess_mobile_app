@@ -1,8 +1,8 @@
-import { createContext, useContext, useMemo, useState } from 'react';
-import { apiPost, getStoredAuth, setStoredAuth } from './api';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { apiGet, apiPost, getStoredAuth, setStoredAuth } from './api';
 
-// The one role the backend actually authorizes for /admin and /users endpoints.
-// (See backend: requireRole('Admin').)
+// The role that can do everything. Other roles get the areas ticked for them
+// in Roles & Permissions (backend: lib/permissions.js).
 export const ADMIN_ROLE = 'Admin';
 
 const AuthContext = createContext(null);
@@ -36,13 +36,32 @@ export function AuthProvider({ children }) {
 
   const logout = () => setAuth(null);
 
+  // Roles / permissions can change after login — refresh them from the server
+  // once per load so the menu matches what the API will actually allow.
+  const token = auth?.accessToken;
+  useEffect(() => {
+    if (!token) return;
+    apiGet('/me').then((me) => {
+      const cur = getStoredAuth();
+      if (!cur || cur.accessToken !== token) return;
+      setAuth({ ...cur, roles: me.roles, permissions: me.permissions, isManager: me.isManager });
+    }).catch(() => {});
+  }, [token]);
+
   const value = useMemo(() => {
     const roles = auth?.roles || [];
+    const isAdmin = roles.includes(ADMIN_ROLE);
+    const perms = auth?.permissions || [];
     return {
       auth,
       roles,
       isAuthed: !!auth && !isExpired(auth),
-      isAdmin: roles.includes(ADMIN_ROLE),
+      isAdmin,
+      perms,
+      // May this user open admin area `perm`? ('admin' = the Admin role itself.)
+      can: (perm) => isAdmin || (perm !== 'admin' && perms.includes(perm)),
+      // Reporting managers (anyone with direct reports) get the team pages.
+      isManager: !!auth?.isManager,
       login,
       logout,
     };

@@ -107,6 +107,88 @@ router.get('/celebrations', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
+/* ---------------- registers ---------------- */
+
+const intYear = (v) => (/^\d{4}$/.test(String(v || '')) ? Number(v) : Number(ymdIST(new Date()).slice(0, 4)));
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const monthBounds = (month) => {
+  const [y, m] = month.split('-').map(Number);
+  const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+  return { dateFrom: new Date(`${month}-01T00:00:00Z`), dateTo: new Date(`${next}-01T00:00:00Z`),
+    instFrom: new Date(`${month}-01T00:00:00+05:30`), instTo: new Date(`${next}-01T00:00:00+05:30`) };
+};
+const activeUsers = () => prisma.user.findMany({
+  where: { isActive: true }, orderBy: { fullName: 'asc' },
+  select: { id: true, username: true, fullName: true, employeeId: true, department: true },
+});
+
+// GET /api/reports/leave-register?year=YYYY — every active employee's balance
+// per leave type (quota / used / pending / available), same numbers the
+// employee sees in the app.
+router.get('/leave-register', async (req, res) => {
+  try {
+    const { balancesFor } = require('./leaves');
+    const year = intYear(req.query.year);
+    const users = await activeUsers();
+    const rows = [];
+    for (const u of users) rows.push({ ...u, balances: await balancesFor(u.id, year) });
+    const types = rows[0]?.balances.map((b) => ({ leaveTypeId: b.leaveTypeId, code: b.code, name: b.name })) || [];
+    res.json({ year, types, rows });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// GET /api/reports/overtime?month=YYYY-MM — approved / pending OT hours per employee.
+router.get('/overtime', async (req, res) => {
+  try {
+    const month = MONTH_RE.test(req.query.month || '') ? req.query.month : ymdIST(new Date()).slice(0, 7);
+    const { dateFrom, dateTo } = monthBounds(month);
+    const [users, groups] = await Promise.all([
+      activeUsers(),
+      prisma.otRequest.groupBy({
+        by: ['userId', 'status'],
+        where: { date: { gte: dateFrom, lt: dateTo }, status: { in: ['approved', 'pending'] } },
+        _sum: { hours: true }, _count: true,
+      }),
+    ]);
+    const get = (uid, st) => groups.find((g) => g.userId === uid && g.status === st);
+    const rows = users.map((u) => ({
+      ...u,
+      approvedHours: Math.round((get(u.id, 'approved')?._sum.hours || 0) * 100) / 100,
+      approvedEntries: get(u.id, 'approved')?._count || 0,
+      pendingHours: Math.round((get(u.id, 'pending')?._sum.hours || 0) * 100) / 100,
+    })).filter((r) => r.approvedHours || r.pendingHours);
+    res.json({ month, rows });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// GET /api/reports/expenses?month=YYYY-MM — claim counts per employee by status and type.
+router.get('/expenses', async (req, res) => {
+  try {
+    const month = MONTH_RE.test(req.query.month || '') ? req.query.month : ymdIST(new Date()).slice(0, 7);
+    const { instFrom, instTo } = monthBounds(month);
+    const [users, claims] = await Promise.all([
+      activeUsers(),
+      prisma.expenseRequest.findMany({
+        where: { createdAt: { gte: instFrom, lt: instTo }, status: { not: 'cancelled' } },
+        select: { userId: true, status: true, type: true },
+      }),
+    ]);
+    const types = [...new Set(claims.map((c) => c.type))].sort();
+    const rows = users.map((u) => {
+      const mine = claims.filter((c) => c.userId === u.id);
+      return {
+        ...u,
+        total: mine.length,
+        approved: mine.filter((c) => c.status === 'approved').length,
+        pending: mine.filter((c) => c.status === 'pending').length,
+        rejected: mine.filter((c) => c.status === 'rejected').length,
+        byType: Object.fromEntries(types.map((t) => [t, mine.filter((c) => c.type === t).length])),
+      };
+    }).filter((r) => r.total);
+    res.json({ month, types, rows });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
 // GET /api/reports/headcount — active headcount by department & employment type
 router.get('/headcount', async (req, res) => {
   try {

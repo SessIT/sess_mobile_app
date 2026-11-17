@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../lib/api';
-import { ensurePunchReminders, onNotificationTap } from '../lib/notifications';
+import { ensurePunchReminders, registerForPush, onNotificationTap } from '../lib/notifications';
 import { BottomNav } from '../components/ui';
 
 const INDIGO = '#1E3A8A';
@@ -28,17 +28,22 @@ const todayStr = () =>
 export default function DashboardScreen({ route, navigation }) {
   const { fullName, roles = [] } = route.params || {};
 
-  // Daily punch reminders (9:15 in / 18:30 out) + tap-to-open-Punch routing.
+  // Daily punch reminders (9:15 in / 18:30 out), server push registration, and
+  // tap-to-open routing for both (each banner carries the screen to open).
   useEffect(() => {
     ensurePunchReminders();
-    return onNotificationTap((screen) => navigation.navigate(screen));
+    registerForPush();
+    return onNotificationTap((screen, params) => navigation.navigate(screen, params));
   }, [navigation]);
 
-  // Unread chat count — powers the bell dot. Polls while this screen is focused.
+  // Unread chat + unread updates — powers the bell dot. Polls while focused.
   const [unread, setUnread] = useState(0);
   useEffect(() => {
     let timer = null;
-    const fetchUnread = () => api('/chat/unread-count').then(r => setUnread(r.count || 0)).catch(() => {});
+    const fetchUnread = () => Promise.all([
+      api('/chat/unread-count').then(r => r.count || 0).catch(() => 0),
+      api('/notifications/unread-count').then(r => r.count || 0).catch(() => 0),
+    ]).then(([chat, updates]) => setUnread(chat + updates));
     const unsubFocus = navigation.addListener('focus', () => {
       fetchUnread();
       timer = setInterval(fetchUnread, 15000);

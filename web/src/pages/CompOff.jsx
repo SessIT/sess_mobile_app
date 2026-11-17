@@ -21,6 +21,8 @@ import {
   ErrorNote,
   PageHeader,
   cx,
+  ManagerStage,
+  confirmSkipManager,
 } from '../components/ui';
 import {
   IconCheckCircle,
@@ -56,7 +58,7 @@ function PunchCell({ punch }) {
       <div className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-600/20">
         <IconClock className="h-3.5 w-3.5" />
         {times}
-        <span className="font-bold">— short of 9:30–6:30</span>
+        <span className="font-bold">— short of {punch.requiredIn || '09:30'}–{punch.requiredOut || '18:30'}</span>
       </div>
     );
   }
@@ -89,10 +91,11 @@ export default function CompOff() {
   useEffect(() => { load(); }, [load]);
 
   const decide = async (r, decision) => {
+    if (decision === 'approved' && !confirmSkipManager(r)) return;
     if (decision === 'approved' && (!r.punch?.punched || !r.punch?.fullDay)) {
       const warn = !r.punch?.punched
         ? 'This employee did NOT punch in/out on the worked day.'
-        : 'Their punches do not cover the full 9:30–6:30 day.';
+        : `Their punches do not cover their full shift (${r.punch.requiredIn || '09:30'}–${r.punch.requiredOut || '18:30'}).`;
       if (!window.confirm(`${warn}\n\nApprove the comp-off credit anyway?`)) return;
     }
     let reviewNote = '';
@@ -139,7 +142,7 @@ export default function CompOff() {
     <div>
       <PageHeader
         title="Comp-Off"
-        subtitle="Credits for week-offs/holidays worked. Approve only when the punch record shows a full 9:30–6:30 day."
+        subtitle="Credits for week-offs/holidays worked. Approve only when the punch record covers the employee's full shift."
       />
 
       <div className="space-y-4">
@@ -190,7 +193,7 @@ export default function CompOff() {
             <CardBody>
               <EmptyState
                 title="No comp-off requests"
-                hint="Employees raise these from the mobile app after working a Sunday or company holiday."
+                hint="Employees raise these from the mobile app after working a week-off or company holiday."
                 icon={<IconInbox />}
               />
             </CardBody>
@@ -201,7 +204,7 @@ export default function CompOff() {
                   <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
                     <th className="px-4 py-3 font-semibold">Employee</th>
                     <th className="px-4 py-3 font-semibold">Worked day</th>
-                    <th className="px-4 py-3 font-semibold">Punch record (9:30–6:30 required)</th>
+                    <th className="px-4 py-3 font-semibold">Punch record (full shift required)</th>
                     <th className="px-4 py-3 font-semibold">Work done</th>
                     <th className="px-4 py-3 font-semibold">Status</th>
                     <th className="px-4 py-3 text-right font-semibold">Action</th>
@@ -223,6 +226,7 @@ export default function CompOff() {
                         </td>
                         <td className="px-4 py-3">
                           <Badge tone={STATUS_TONE[r.status] || 'gray'}>{r.status}</Badge>
+                          <div className="mt-1"><ManagerStage stage={r.managerStage} /></div>
                           {(r.status === 'rejected' || r.status === 'revoked') && r.reviewNote && (
                             <p className="mt-1 max-w-[12rem] text-xs text-slate-400">{r.reviewNote}</p>
                           )}

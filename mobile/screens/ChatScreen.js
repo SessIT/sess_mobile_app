@@ -7,12 +7,11 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
-import { api, apiUpload, API_URL } from '../lib/api';
+import { api, apiUpload, fileUrl } from '../lib/api';
 import { GradientHeader } from '../components/ui';
 import { COLORS, SHADOW } from '../lib/theme';
 import { useKeyboard } from '../lib/useKeyboard';
 
-const BASE = API_URL.replace('/api', '');
 const POLL_MS = 4000;
 const NAME_COLORS = ['#4F46E5', '#0891B2', '#16A34A', '#D97706', '#DC2626', '#7C3AED', '#DB2777'];
 
@@ -323,14 +322,14 @@ export default function ChatScreen({ route, navigation }) {
                         <TouchableOpacity
                           style={styles.mediaVideo}
                           activeOpacity={0.85}
-                          onPress={() => Linking.openURL(`${BASE}/${r.attachment}`)}
+                          onPress={() => Linking.openURL(fileUrl(r.attachment))}
                         >
                           <MaterialIcons name="play-circle-filled" size={42} color="#fff" />
                           <Text style={styles.mediaVideoText}>Video · tap to play</Text>
                         </TouchableOpacity>
                       ) : (
-                        <TouchableOpacity activeOpacity={0.9} onPress={() => setViewer(`${BASE}/${r.attachment}`)}>
-                          <Image source={{ uri: `${BASE}/${r.attachment}` }} style={styles.mediaImage} />
+                        <TouchableOpacity activeOpacity={0.9} onPress={() => setViewer(fileUrl(r.attachment))}>
+                          <Image source={{ uri: fileUrl(r.attachment) }} style={styles.mediaImage} />
                         </TouchableOpacity>
                       )
                     ) : null}

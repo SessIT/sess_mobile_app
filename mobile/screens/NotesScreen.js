@@ -9,10 +9,9 @@ import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { GradientHeader, BottomNav } from '../components/ui';
 import { COLORS } from '../lib/theme';
-import { api, apiUpload, API_URL } from '../lib/api';
+import { api, apiUpload, fileUrl } from '../lib/api';
 import { useKeyboard } from '../lib/useKeyboard';
 
-const BASE = API_URL.replace('/api', '');
 
 /* My Notes — two things in one list:
  *   • notices an admin sent to me (kind: 'admin') — READ ONLY, no reply path
@@ -169,8 +168,8 @@ export default function NotesScreen({ navigation }) {
         {item.body ? <Text style={styles.noteBody}>{item.body}</Text> : null}
 
         {item.photo ? (
-          <TouchableOpacity activeOpacity={0.9} onPress={() => setViewPhoto(`${BASE}/${item.photo}`)}>
-            <Image source={{ uri: `${BASE}/${item.photo}` }} style={styles.notePhoto} resizeMode="cover" />
+          <TouchableOpacity activeOpacity={0.9} onPress={() => setViewPhoto(fileUrl(item.photo))}>
+            <Image source={{ uri: fileUrl(item.photo) }} style={styles.notePhoto} resizeMode="cover" />
           </TouchableOpacity>
         ) : null}
 

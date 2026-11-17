@@ -67,10 +67,28 @@ async function sendOtpEmail(email, code) {
   }
 }
 
+// General notification email (payslip ready, request decided…). Never throws.
+// Without SMTP config it only logs in dev and quietly skips in production —
+// a notification email is a convenience, unlike the OTP.
+async function sendMail({ to, subject, text, html }) {
+  if (!to) return { ok: false, error: 'No recipient' };
+  if (!configured()) {
+    if (process.env.NODE_ENV !== 'production') console.log(`[mailer] DEV MODE — would email ${to}: ${subject}`);
+    return { ok: false, error: 'Email is not configured' };
+  }
+  try {
+    await getTransporter().sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text, html });
+    return { ok: true };
+  } catch (e) {
+    console.error('[mailer] send failed:', e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
 // Mask for UI hints: "paramanantham79@gmail.com" -> "pa•••@gmail.com"
 const maskEmail = (email) => {
   const [local, domain] = String(email).split('@');
   return `${local.slice(0, 2)}•••@${domain}`;
 };
 
-module.exports = { sendOtpEmail, configured, maskEmail };
+module.exports = { sendOtpEmail, sendMail, configured, maskEmail };

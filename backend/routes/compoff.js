@@ -2,6 +2,11 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { reclaimedLeaveDays } = require('../lib/leaveWorked');
+const { shiftForUser, loadShiftResolver, isWeekOff, shiftWindow } = require('../lib/shifts');
+const { assertUnlocked } = require('../lib/attendanceLock');
+const { holidayOn, branchOfUser } = require('../lib/holidays');
+const { withManagerStage } = require('../lib/approvals');
+const { requestCreated, finalDecided } = require('../lib/requestEvents');
 const router = express.Router();
 const ADMIN = 'Admin';
 
@@ -24,52 +29,48 @@ const monthRange = (month) => {
   };
 };
 
-// A full comp-off day is 9:30 → 18:30 IST on the worked week-off/holiday.
-const REQ_IN = '09:30';
-const REQ_OUT = '18:30';
+// A full comp-off day covers the employee's shift (start → end, IST) on the
+// worked week-off/holiday.
 
 // Punch record of a user's day (IST window). Drives the admin alert:
 //   punched=false          → they never punched in/out that day
-//   punched, fullDay=false → punches exist but don't cover 9:30–18:30
-async function punchSummary(userId, ymd) {
+//   punched, fullDay=false → punches exist but don't cover the shift
+async function punchSummary(userId, ymd, shift) {
   const start = new Date(`${ymd}T00:00:00+05:30`);
   const end = new Date(start.getTime() + 24 * 3600000);
   const sessions = await prisma.attendanceSession.findMany({
     where: { userId, punchInTime: { gte: start, lt: end } },
     orderBy: { punchInTime: 'asc' },
   });
+  const requiredIn = shift.startTime, requiredOut = shift.endTime;
   if (sessions.length === 0)
-    return { punched: false, firstIn: null, lastOut: null, hours: 0, fullDay: false };
+    return { punched: false, firstIn: null, lastOut: null, hours: 0, fullDay: false, requiredIn, requiredOut };
   const firstIn = sessions[0].punchInTime;
   const outs = sessions.filter((s) => s.punchOutTime);
   const lastOut = outs.length ? outs[outs.length - 1].punchOutTime : null;
   const hours = Math.round(sessions.reduce((sum, s) => sum + (s.workingHours || 0), 0) * 100) / 100;
-  const requiredIn = new Date(`${ymd}T${REQ_IN}:00+05:30`);
-  const requiredOut = new Date(`${ymd}T${REQ_OUT}:00+05:30`);
-  const fullDay = !!lastOut && firstIn <= requiredIn && lastOut >= requiredOut;
-  return { punched: true, firstIn, lastOut, hours, fullDay };
+  const win = shiftWindow(shift, ymd);
+  const fullDay = !!lastOut && firstIn <= win.start && lastOut >= win.end;
+  return { punched: true, firstIn, lastOut, hours, fullDay, requiredIn, requiredOut };
 }
 
-// The worked day must be a Sunday (week-off) or a company holiday.
-async function isWeekoffOrHoliday(ymd) {
-  // Zone-immune weekday: parsed at UTC midnight and read back in UTC, matching
-  // leaves.js. A '+05:30' parse plus getDay() would resolve the weekday in the
-  // server's timezone, so a non-IST host would credit comp-off for the wrong day.
-  const wd = new Date(ymd + 'T00:00:00.000Z').getUTCDay();
-  if (wd === 0) return { ok: true, kind: 'weekoff' };
-  const holiday = await prisma.holiday.findUnique({ where: { date: dateOnly(ymd) } });
+// The worked day must be one of the employee's shift week-offs or a company holiday.
+async function isWeekoffOrHoliday(ymd, shift, branchId = null) {
+  if (isWeekOff(shift, ymd)) return { ok: true, kind: 'weekoff' };
+  const holiday = await holidayOn(ymd, branchId); // company-wide or the employee's branch
   if (holiday) return { ok: true, kind: 'holiday', name: holiday.name };
   return { ok: false };
 }
 
 // Attach the worked-day punch record to each request row.
 async function withPunch(rows) {
+  const resolver = await loadShiftResolver([...new Set(rows.map((r) => r.userId))]);
   const out = [];
   for (const r of rows) {
     const ymd = new Date(r.workDate).toISOString().slice(0, 10);
-    out.push({ ...r, punch: await punchSummary(r.userId, ymd) });
+    out.push({ ...r, punch: await punchSummary(r.userId, ymd, resolver.forUser(r.userId)) });
   }
-  return out;
+  return { rows: await withManagerStage('compoff', out), def: resolver.def };
 }
 
 const includeUser = {
@@ -118,8 +119,8 @@ router.get('/my', async (req, res) => {
       orderBy: [{ workDate: 'desc' }, { id: 'desc' }],
       include: { reviewedBy: { select: { fullName: true, username: true } } },
     });
-    const [requests, balance] = await Promise.all([withPunch(rows), compBalance(req.user.sub, year)]);
-    res.json({ year, balance, requests });
+    const [withP, balance] = await Promise.all([withPunch(rows), compBalance(req.user.sub, year)]);
+    res.json({ year, balance, requests: withP.rows });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -133,12 +134,14 @@ router.post('/requests', async (req, res) => {
     if (workDate > ymdIST(new Date()))
       return res.status(400).json({ message: 'You can request comp-off only after working that day' });
 
-    const day = await isWeekoffOrHoliday(workDate);
+    const shift = await shiftForUser(req.user.sub);
+    const day = await isWeekoffOrHoliday(workDate, shift, await branchOfUser(req.user.sub));
     if (!day.ok)
-      return res.status(400).json({ message: 'Comp-off applies only to a week-off (Sunday) or a company holiday you worked on' });
+      return res.status(400).json({ message: 'Comp-off applies only to a week-off or a company holiday you worked on' });
+    if (!(await assertUnlocked(res, workDate))) return;
 
     // They must actually have punched that day — no punch, no request.
-    const punch = await punchSummary(req.user.sub, workDate);
+    const punch = await punchSummary(req.user.sub, workDate, shift);
     if (!punch.punched)
       return res.status(400).json({ message: `No punch in/out found on ${workDate}. Comp-off needs an attendance record for that day.` });
 
@@ -155,6 +158,7 @@ router.post('/requests', async (req, res) => {
         status: 'pending',
       },
     });
+    requestCreated('compoff', created);
     res.status(201).json({ ...created, punch, dayKind: day.kind });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -192,7 +196,10 @@ router.get('/requests', requireRole(ADMIN), async (req, res) => {
       orderBy: [{ status: 'asc' }, { workDate: 'desc' }],
       include: includeUser,
     });
-    res.json({ year, requests: await withPunch(rows), requiredIn: REQ_IN, requiredOut: REQ_OUT });
+    // requiredIn/Out at the top level follow the default shift (older clients
+    // read these); each row's punch carries its own employee's shift times.
+    const { rows: requests, def } = await withPunch(rows);
+    res.json({ year, requests, requiredIn: def.startTime, requiredOut: def.endTime });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -208,6 +215,8 @@ router.patch('/requests/:id/decision', requireRole(ADMIN), async (req, res) => {
     if (!row) return res.status(404).json({ message: 'Request not found' });
     if (row.status !== 'pending')
       return res.status(400).json({ message: `Request is already ${row.status}` });
+    const workYmd = new Date(row.workDate).toISOString().slice(0, 10);
+    if (status === 'approved' && !(await assertUnlocked(res, workYmd))) return;
 
     const updated = await prisma.compOffRequest.update({
       where: { id },
@@ -219,8 +228,8 @@ router.patch('/requests/:id/decision', requireRole(ADMIN), async (req, res) => {
       },
       include: includeUser,
     });
-    const ymd = new Date(updated.workDate).toISOString().slice(0, 10);
-    res.json({ ...updated, punch: await punchSummary(updated.userId, ymd) });
+    finalDecided('compoff', updated, updated.status);
+    res.json({ ...updated, punch: await punchSummary(updated.userId, workYmd, await shiftForUser(updated.userId)) });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -234,6 +243,7 @@ router.patch('/admin/:id/revoke', requireRole(ADMIN), async (req, res) => {
     if (!row) return res.status(404).json({ message: 'Request not found' });
     if (row.status !== 'approved')
       return res.status(400).json({ message: 'Only approved credits can be revoked' });
+    if (!(await assertUnlocked(res, new Date(row.workDate).toISOString().slice(0, 10)))) return;
 
     const updated = await prisma.compOffRequest.update({
       where: { id },
@@ -245,6 +255,7 @@ router.patch('/admin/:id/revoke', requireRole(ADMIN), async (req, res) => {
       },
       include: includeUser,
     });
+    finalDecided('compoff', updated, 'revoked');
     res.json(updated);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });

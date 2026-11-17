@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip , SheetOverlay} from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, SheetOverlay, ManagerStage } from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -48,7 +48,7 @@ function PunchBanner({ punch }) {
       <View style={[styles.punchBanner, { backgroundColor: COLORS.orangeSoft }]}>
         <MaterialIcons name="warning-amber" size={16} color={COLORS.orange} />
         <Text style={[styles.punchBannerText, { color: COLORS.orange }]}>
-          {fmtTime(punch.firstIn)} → {punch.lastOut ? fmtTime(punch.lastOut) : 'NO PUNCH-OUT'} · {punch.hours}h — did not cover 9:30 AM–6:30 PM
+          {fmtTime(punch.firstIn)} → {punch.lastOut ? fmtTime(punch.lastOut) : 'NO PUNCH-OUT'} · {punch.hours}h — did not cover their shift {punch.requiredIn || '09:30'}–{punch.requiredOut || '18:30'}
         </Text>
       </View>
     );
@@ -111,7 +111,7 @@ export default function CompOffApprovalsScreen({ navigation }) {
     const warn = !r.punch?.punched
       ? '\n\n⚠ They did NOT punch in/out that day.'
       : !r.punch?.fullDay
-        ? '\n\n⚠ Their punches do not cover the full 9:30–6:30 day.'
+        ? `\n\n⚠ Their punches do not cover their full shift (${r.punch.requiredIn || '09:30'}–${r.punch.requiredOut || '18:30'}).`
         : '';
     const go = async () => {
       setBusyId(r.id);
@@ -256,6 +256,7 @@ export default function CompOffApprovalsScreen({ navigation }) {
 
                   <PunchBanner punch={r.punch} />
                   {r.reason ? <Text style={styles.reason}>“{r.reason}”</Text> : null}
+                  <ManagerStage stage={r.managerStage} />
                   {(r.status === 'rejected' || r.status === 'revoked') && r.reviewNote ? (
                     <Text style={styles.reviewNote}>{r.reviewNote}</Text>
                   ) : null}

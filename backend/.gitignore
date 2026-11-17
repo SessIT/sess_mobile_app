@@ -7,3 +7,4 @@ node_modules
 
 /generated/prisma
 uploads/
+private_uploads/

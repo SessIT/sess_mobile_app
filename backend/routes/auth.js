@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const prisma = require('../lib/prisma');
 const { sendOtpEmail, maskEmail } = require('../lib/mailer');
+const { isManager } = require('../lib/team');
+const { permissionsForRoles } = require('../lib/permissions');
 const router = express.Router();
 
 /* ---- Per-IP rate limits on the auth surface ----
@@ -28,7 +30,18 @@ router.use(authLimiter);
 
 const EMPLOYEE_TOKEN_DAYS = 90;
 
-function issueTokens(user, roles, days) {
+// `isManager` (has direct reports) lets the apps show team screens straight
+// after login; it is informational — /team endpoints re-check it every call.
+async function issueTokens(user, roles, days) {
+  return {
+    ...issueTokensBase(user, roles, days),
+    isManager: await isManager(user.id),
+    // Admin-console areas this user may open (all of them for Admin).
+    permissions: await permissionsForRoles(roles),
+  };
+}
+
+function issueTokensBase(user, roles, days) {
   const accessToken = jwt.sign(
     { sub: user.id, username: user.username, roles },
     process.env.JWT_SECRET, { expiresIn: `${days}d` });
@@ -61,7 +74,7 @@ router.post('/login', async (req, res) => {
      * passing the roles.some(...) check in requireRole. The shape is deliberate.
      * Storage changed; the JWT/response contract did not. */
     const roles = user.role ? [user.role.name] : [];
-    res.json(issueTokens(user, roles, 1)); // admin password session: 1 day
+    res.json(await issueTokens(user, roles, 1)); // admin password session: 1 day
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -276,7 +289,7 @@ router.post('/verify-pin', async (req, res) => {
     pinAttempts.delete(ident.value);
 
     const roles = user.role ? [user.role.name] : []; // still an ARRAY: 90-day tokens must keep validating
-    res.json(issueTokens(user, roles, EMPLOYEE_TOKEN_DAYS)); // 90-day session (unchanged)
+    res.json(await issueTokens(user, roles, EMPLOYEE_TOKEN_DAYS)); // 90-day session (unchanged)
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -322,7 +335,7 @@ router.post('/set-pin', async (req, res) => {
     pinAttempts.delete(ident.value);
 
     const roles = user.role ? [user.role.name] : []; // still an ARRAY: 90-day tokens must keep validating
-    res.json(issueTokens(user, roles, EMPLOYEE_TOKEN_DAYS)); // 90-day session (unchanged)
+    res.json(await issueTokens(user, roles, EMPLOYEE_TOKEN_DAYS)); // 90-day session (unchanged)
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 

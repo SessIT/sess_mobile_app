@@ -43,7 +43,7 @@ export default function Holidays() {
     setLoading(true);
     setError('');
     try {
-      const res = await apiGet(`/holidays?year=${y}`);
+      const res = await apiGet(`/holidays?year=${y}&branch=all`);
       setHolidays(Array.isArray(res.holidays) ? res.holidays : []);
     } catch (err) {
       setError(err.message || 'Failed to load holidays');
@@ -144,7 +144,10 @@ export default function Holidays() {
                     <tr key={h.id} className={past ? 'text-slate-400 hover:bg-slate-50' : 'hover:bg-slate-50'}>
                       <td className="px-5 py-3 font-semibold text-slate-800">{fmtHolidayDate(h.date)}</td>
                       <td className="px-5 py-3 text-slate-600">{weekdayOf(h.date)}</td>
-                      <td className="px-5 py-3 font-medium text-slate-700">{h.name}</td>
+                      <td className="px-5 py-3 font-medium text-slate-700">
+                        {h.name}
+                        {h.branchName && <span className="ml-2 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700">{h.branchName} only</span>}
+                      </td>
                       <td className="px-5 py-3">
                         {past ? <Badge tone="gray">Past</Badge> : <Badge tone="green">Upcoming</Badge>}
                       </td>
@@ -192,6 +195,8 @@ export default function Holidays() {
 function AddHolidayModal({ open, onClose, onSaved }) {
   const [date, setDate] = useState(todayIST());
   const [name, setName] = useState('');
+  const [branchId, setBranchId] = useState('');
+  const [branches, setBranches] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -199,6 +204,8 @@ function AddHolidayModal({ open, onClose, onSaved }) {
     if (open) {
       setDate(todayIST());
       setName('');
+      setBranchId('');
+      apiGet('/branches/list').then(setBranches).catch(() => setBranches([]));
       setError('');
       setBusy(false);
     }
@@ -215,7 +222,7 @@ function AddHolidayModal({ open, onClose, onSaved }) {
     setBusy(true);
     setError('');
     try {
-      const saved = await apiPost('/holidays', { date, name: name.trim() });
+      const saved = await apiPost('/holidays', { date, name: name.trim(), branchId: branchId || null });
       onSaved(saved);
     } catch (err) {
       setError(err.message || 'Could not save holiday.');
@@ -255,6 +262,15 @@ function AddHolidayModal({ open, onClose, onSaved }) {
         <Field label="Holiday name">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Independence Day" />
         </Field>
+        {branches.length > 0 && (
+          <Field label="Applies to" hint="A branch-only holiday (e.g. a state holiday) is a working day for other branches.">
+            <select value={branchId} onChange={(e) => setBranchId(e.target.value)}
+              className="w-full rounded-lg border border-slate-300/90 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm">
+              <option value="">All branches</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name} only</option>)}
+            </select>
+          </Field>
+        )}
         <button type="submit" className="hidden" aria-hidden="true" />
       </form>
     </Modal>

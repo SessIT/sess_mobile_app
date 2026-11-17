@@ -1,6 +1,10 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { assertUnlocked } = require('../lib/attendanceLock');
+const { withManagerStage } = require('../lib/approvals');
+const { requestCreated, finalDecided } = require('../lib/requestEvents');
+const { notify } = require('../lib/notify');
 const router = express.Router();
 const ADMIN = 'Admin';
 
@@ -114,7 +118,7 @@ router.get('/my', async (req, res) => {
         pendingHours: Math.round(pendingHours * 100) / 100,
       },
       calendar,
-      requests,
+      requests: await withManagerStage('ot', requests),
     });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -159,6 +163,7 @@ router.post('/requests', async (req, res) => {
         source: 'employee',
       },
     });
+    requestCreated('ot', created);
     res.status(201).json(created);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -209,7 +214,7 @@ router.get('/requests', requireRole(ADMIN), async (req, res) => {
       take: LIST_MAX,
       include: includeUser,
     });
-    res.json({ month, requests, truncated: requests.length === LIST_MAX });
+    res.json({ month, requests: await withManagerStage('ot', requests), truncated: requests.length === LIST_MAX });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -225,6 +230,8 @@ router.patch('/requests/:id/decision', requireRole(ADMIN), async (req, res) => {
     if (!row) return res.status(404).json({ message: 'Request not found' });
     if (row.status !== 'pending')
       return res.status(400).json({ message: `Request is already ${row.status}` });
+    // Approved OT feeds the month's OT hours, so a locked month refuses it.
+    if (status === 'approved' && !(await assertUnlocked(res, new Date(row.date).toISOString().slice(0, 10)))) return;
 
     const updated = await prisma.otRequest.update({
       where: { id },
@@ -236,6 +243,7 @@ router.patch('/requests/:id/decision', requireRole(ADMIN), async (req, res) => {
       },
       include: includeUser,
     });
+    finalDecided('ot', updated, updated.status);
     res.json(updated);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -259,6 +267,7 @@ router.post('/grant', requireRole(ADMIN), async (req, res) => {
     const { start, end, hours } = otWindow(date, startTime, endTime);
     if (hours <= 0 || hours > 12)
       return res.status(400).json({ message: 'OT duration must be between 15 minutes and 12 hours' });
+    if (!(await assertUnlocked(res, date))) return;
 
     const users = await prisma.user.findMany({
       where: { id: { in: userIds }, isActive: true },
@@ -293,6 +302,13 @@ router.post('/grant', requireRole(ADMIN), async (req, res) => {
       });
       created.push(row);
     }
+    if (created.length) {
+      notify(created.map((r) => r.userId), {
+        kind: 'ot', title: `Overtime added for ${date}`,
+        body: `${hours} h approved (${startTime}–${endTime}): ${reasonTrim.slice(0, 80)}`,
+        data: { screen: 'Overtime' },
+      });
+    }
     res.status(201).json({ created, skipped });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -303,6 +319,7 @@ router.delete('/admin/:id', requireRole(ADMIN), async (req, res) => {
     const id = Number(req.params.id);
     const row = await prisma.otRequest.findUnique({ where: { id } });
     if (!row) return res.status(404).json({ message: 'Entry not found' });
+    if (row.status === 'approved' && !(await assertUnlocked(res, new Date(row.date).toISOString().slice(0, 10)))) return;
     await prisma.otRequest.delete({ where: { id } });
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }

@@ -2,9 +2,11 @@
 // Two tabs (Month Summary / Day View) driven by local state.
 //   Month tab: per-user month roll-up + drill-down into one user's day-by-day grid.
 //   Day tab:   day-level stat cards + per-user punch sessions (with photos) + absentees.
-// All data comes from the /attendance/admin/* endpoints via the api helpers.
+// Data comes from /attendance/admin/* — or, with scope="team" (a reporting
+// manager's "My Team" page), from the read-only /attendance/team/* endpoints,
+// which return the same shapes limited to the manager's reporting tree.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPost, apiPatch, api, fileUrl } from '../lib/api';
 import {
   fmtTime,
@@ -30,6 +32,8 @@ import {
   PageHeader,
   Modal,
   cx,
+  ManagerStage,
+  confirmSkipManager,
 } from '../components/ui';
 import {
   IconCheckCircle,
@@ -47,7 +51,23 @@ import {
   IconLeave,
   IconDownload,
   IconGift,
+  IconLock,
 } from '../components/icons';
+
+// Which API family the page talks to, and whether editing is allowed.
+const ScopeCtx = createContext({ base: '/attendance/admin', readOnly: false });
+const useScope = () => useContext(ScopeCtx);
+
+// Shift-rule flags on a worked day (computed by the server from the employee's shift).
+function DayFlags({ d }) {
+  return (
+    <>
+      {d.missedPunchOut && <Badge tone="red">No punch-out</Badge>}
+      {d.earlyOut && <Badge tone="amber">Early out</Badge>}
+      {d.halfDay && <Badge tone="amber">Half day</Badge>}
+    </>
+  );
+}
 
 /* Time helpers for the manual-entry editor — everything is IST (+05:30). */
 // ISO instant -> "HH:MM" for a <input type="time">.
@@ -78,6 +98,8 @@ function StatusBadge({ status }) {
     // Holidays page uses — is what keeps it apart from "Week off".
     holiday: { tone: 'gray', label: 'Holiday', icon: <IconGift className="h-3 w-3" /> },
     future: { tone: 'gray', label: '—' },
+    // Before the joining date or after the exit date — never counted as absent.
+    na: { tone: 'gray', label: 'Not employed' },
   };
   const { tone, label, icon } = map[status] || { tone: 'slate', label: status || '—' };
   return <Badge tone={tone}>{icon}{label}</Badge>;
@@ -148,6 +170,8 @@ function MonthSummaryTable({ rows, onPick, requiredHours }) {
             <th className="px-3 py-2 text-center font-semibold">Leave</th>
             <th className="px-3 py-2 text-center font-semibold">Absent</th>
             <th className="px-3 py-2 text-center font-semibold">Late</th>
+            <th className="px-3 py-2 text-center font-semibold" title="Left before shift end">Early</th>
+            <th className="px-3 py-2 text-center font-semibold" title="Worked under the shift's half-day hours">Half</th>
             <th className="px-3 py-2 text-right font-semibold">Required</th>
             <th className="px-3 py-2 text-right font-semibold">Worked</th>
             <th className="px-3 py-2 text-right font-semibold">OT</th>
@@ -166,12 +190,20 @@ function MonthSummaryTable({ rows, onPick, requiredHours }) {
               >
                 <td className="px-3 py-2.5">
                   <p className="font-semibold text-slate-800">{r.fullName || r.username}</p>
-                  <p className="text-xs text-slate-400">@{r.username}</p>
+                  <p className="text-xs text-slate-400">
+                    @{r.username}{r.shiftName ? ` · ${r.shiftName}` : ''}
+                  </p>
                 </td>
                 <td className="px-3 py-2.5 text-center font-semibold text-emerald-600">{r.present}</td>
                 <td className="px-3 py-2.5 text-center font-semibold text-brand-700">{r.leave ?? 0}</td>
                 <td className="px-3 py-2.5 text-center font-semibold text-red-600">{r.absent}</td>
                 <td className="px-3 py-2.5 text-center font-semibold text-amber-600">{r.late}</td>
+                <td className={cx('px-3 py-2.5 text-center font-semibold', r.earlyOut ? 'text-amber-600' : 'text-slate-300')}>
+                  {r.earlyOut ?? 0}
+                </td>
+                <td className={cx('px-3 py-2.5 text-center font-semibold', r.halfDay ? 'text-amber-600' : 'text-slate-300')}>
+                  {r.halfDay ?? 0}
+                </td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-slate-400">
                   {req != null ? fmtHours(req) : '—'}
                 </td>
@@ -197,15 +229,16 @@ function MonthUserDetail({ month, user, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [manage, setManage] = useState(null); // { userId, userName, date } | null
+  const { base, readOnly } = useScope();
 
   const load = useCallback(() => {
     setLoading(true);
     setError('');
-    return apiGet(`/attendance/admin/month?month=${month}&userId=${user.userId}`)
+    return apiGet(`${base}/month?month=${month}&userId=${user.userId}`)
       .then((d) => setData(d))
       .catch((e) => setError(e.message || 'Failed to load user month'))
       .finally(() => setLoading(false));
-  }, [month, user.userId]);
+  }, [base, month, user.userId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -220,7 +253,8 @@ function MonthUserDetail({ month, user, onBack }) {
   // it is elapsed and not a Sunday (already a week-off, never subtracted twice),
   // and holidayName survives even when a punch or a leave wins the day's status.
   const today = todayIST();
-  const holidayCount = days.filter((d) => d.holidayName && d.weekday !== 0 && d.date <= today).length;
+  const offDays = data?.shift?.weekOffDays || [0];
+  const holidayCount = days.filter((d) => d.holidayName && !offDays.includes(d.weekday) && d.date <= today).length;
   const requiredSub = [
     data?.hoursPerDay ? `${data.hoursPerDay} h/day` : null,
     holidayCount ? `${holidayCount} holiday${holidayCount === 1 ? '' : 's'}` : null,
@@ -228,7 +262,7 @@ function MonthUserDetail({ month, user, onBack }) {
 
   // Click a day to fix its punches. Future days aren't editable.
   const openDay = (d) => {
-    if (d.status === 'future') return;
+    if (readOnly || d.status === 'future') return;
     setManage({ userId: user.userId, userName, date: d.date });
   };
 
@@ -237,7 +271,10 @@ function MonthUserDetail({ month, user, onBack }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-slate-800">{user.fullName || user.username}</h2>
-          <p className="text-xs text-slate-400">@{user.username} · {month}</p>
+          <p className="text-xs text-slate-400">
+            @{user.username} · {month}
+            {data?.shift && ` · ${data.shift.name} (${data.shift.startTime}–${data.shift.endTime})`}
+          </p>
         </div>
         <Button variant="secondary" size="sm" onClick={onBack}>
           <IconChevronLeft className="h-4 w-4" />
@@ -276,12 +313,12 @@ function MonthUserDetail({ month, user, onBack }) {
                     <th className="px-3 py-2 text-center font-semibold">Sessions</th>
                     <th className="px-3 py-2 text-right font-semibold">Hours</th>
                     <th className="px-3 py-2 font-semibold">Sites</th>
-                    <th className="px-3 py-2 text-right font-semibold">Edit</th>
+                    {!readOnly && <th className="px-3 py-2 text-right font-semibold">Edit</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {days.map((d) => {
-                    const editable = d.status !== 'future';
+                    const editable = !readOnly && d.status !== 'future';
                     return (
                       <tr
                         key={d.date}
@@ -310,6 +347,7 @@ function MonthUserDetail({ month, user, onBack }) {
                                 {d.holidayName}
                               </span>
                             )}
+                            <DayFlags d={d} />
                           </div>
                         </td>
                         <td className="px-3 py-2.5 text-slate-600">{d.status === 'present' ? fmtTime(d.firstIn) : '—'}</td>
@@ -323,13 +361,15 @@ function MonthUserDetail({ month, user, onBack }) {
                         <td className="px-3 py-2.5">
                           {d.status === 'present' ? <SiteBadges sites={d.sites} /> : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="px-3 py-2.5 text-right">
-                          {editable ? (
-                            <IconEdit className="ml-auto h-4 w-4 text-slate-400" />
-                          ) : (
-                            <span className="text-slate-300">—</span>
-                          )}
-                        </td>
+                        {!readOnly && (
+                          <td className="px-3 py-2.5 text-right">
+                            {editable ? (
+                              <IconEdit className="ml-auto h-4 w-4 text-slate-400" />
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -353,20 +393,44 @@ function MonthTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null); // a summary row -> drill-down
+  const [reloadKey, setReloadKey] = useState(0);
+  const [lockBusy, setLockBusy] = useState(false);
+  const { base, readOnly } = useScope();
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setError('');
     setSelected(null); // reset drill-down when the month changes
-    apiGet(`/attendance/admin/month?month=${month}`)
+    apiGet(`${base}/month?month=${month}`)
       .then((d) => alive && setData(d))
       .catch((e) => alive && setError(e.message || 'Failed to load month summary'))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [month]);
+  }, [base, month, reloadKey]);
+
+  // Only a fully finished month can be locked (the server enforces this too).
+  // Locking is payroll work — never offered on a manager's team page.
+  const canLock = !readOnly && month < monthIST();
+  const toggleLock = async () => {
+    const locking = !data?.locked;
+    const msg = locking
+      ? `Lock ${month} for payroll?\n\nThe summary is frozen as it is now, and no punch edits, corrections, or leave / OT / comp-off approvals can change ${month} until it is unlocked.`
+      : `Unlock ${month}?\n\nThe frozen summary is discarded and the month can be edited again. Re-lock it before running payroll.`;
+    if (!window.confirm(msg)) return;
+    setLockBusy(true);
+    try {
+      if (locking) await apiPost('/attendance/admin/locks', { month });
+      else await api(`/attendance/admin/locks/${month}`, { method: 'DELETE' });
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      window.alert(e.message || 'Could not change the lock');
+    } finally {
+      setLockBusy(false);
+    }
+  };
 
   // Download the month summary as CSV (mirrors the mobile export columns).
   const exportCsv = () => {
@@ -378,10 +442,13 @@ function MonthTab() {
       `Working days so far:,${data.workingDaysSoFar}`,
       `Required hours:,${data.requiredHours} (${data.hoursPerDay || 8}h/day)`,
       '',
-      'Name,Username,Present,Leave,Absent,Late,Required Hours,Worked Hours,OT Hours',
+      `Status:,${data.locked ? `LOCKED${data.lockedBy ? ` by ${data.lockedBy}` : ''}` : 'Open (live)'}`,
+      '',
+      'Name,Username,Shift,Present,Leave,Absent,Late,Early Out,Half Day,Required Hours,Worked Hours,OT Hours',
       ...rows.map((r) => [
-        esc(r.fullName || r.username), r.username, r.present, r.leave ?? 0,
-        r.absent, r.late, r.requiredHours ?? data.requiredHours, r.hours, r.otHours ?? 0,
+        esc(r.fullName || r.username), r.username, esc(r.shiftName || ''), r.present, r.leave ?? 0,
+        r.absent, r.late, r.earlyOut ?? 0, r.halfDay ?? 0,
+        r.requiredHours ?? data.requiredHours, r.hours, r.otHours ?? 0,
       ].join(',')),
     ];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -425,9 +492,27 @@ function MonthTab() {
                 Export CSV
               </Button>
             )}
+            {!readOnly && (canLock || data.locked) && (
+              <Button variant={data.locked ? 'secondary' : 'primary'} onClick={toggleLock} disabled={lockBusy}>
+                {lockBusy ? <Spinner className="h-4 w-4 text-current" /> : <IconLock className="h-4 w-4" />}
+                {data.locked ? 'Unlock month' : 'Lock for payroll'}
+              </Button>
+            )}
           </div>
         )}
       </div>
+
+      {data?.locked && !selected && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <IconLock className="h-4 w-4 shrink-0" />
+          <span>
+            <span className="font-semibold">Locked for payroll</span>
+            {data.lockedBy ? ` by ${data.lockedBy}` : ''}
+            {data.lockedAt ? ` on ${fmtDate(isoToDateIST(data.lockedAt))}` : ''}.
+            {' '}These figures are frozen; edits, corrections and approvals for this month are blocked until it is unlocked.
+          </span>
+        </div>
+      )}
 
       <Card>
         <CardBody>
@@ -527,7 +612,8 @@ function DaySessionRow({ s, onOpenPhoto, onEdit, onDelete }) {
         />
       </div>
 
-      {/* Admin edit / delete */}
+      {/* Admin edit / delete (absent on the read-only team page) */}
+      {onEdit && (
       <div className="flex items-center gap-1.5">
         <Button size="sm" variant="secondary" onClick={() => onEdit(s)} title="Edit session">
           <IconEdit className="h-4 w-4" />
@@ -536,6 +622,7 @@ function DaySessionRow({ s, onOpenPhoto, onEdit, onDelete }) {
           <IconTrash className="h-4 w-4" />
         </Button>
       </div>
+      )}
     </div>
   );
 }
@@ -554,20 +641,21 @@ function DayTab() {
 
   const [photo, setPhoto] = useState(null); // { url, label, address, time }
   const [editor, setEditor] = useState(null); // { mode:'create'|'edit', session?, date, employees }
+  const { base, readOnly } = useScope();
 
   const load = useCallback((d) => {
     let alive = true;
 
     setSumLoading(true);
     setSumError('');
-    apiGet(`/attendance/admin/day?date=${d}`)
+    apiGet(`${base}/day?date=${d}`)
       .then((r) => alive && setSummary(r))
       .catch((e) => alive && setSumError(e.message || 'Failed to load day summary'))
       .finally(() => alive && setSumLoading(false));
 
     setSesLoading(true);
     setSesError('');
-    apiGet(`/attendance/admin/day-sessions?date=${d}`)
+    apiGet(`${base}/day-sessions?date=${d}`)
       .then((r) => alive && setSessions(r))
       .catch((e) => alive && setSesError(e.message || 'Failed to load sessions'))
       .finally(() => alive && setSesLoading(false));
@@ -575,7 +663,7 @@ function DayTab() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [base]);
 
   useEffect(() => load(date), [date, load]);
 
@@ -592,6 +680,10 @@ function DayTab() {
   }, [sessions]);
 
   const absent = summary?.absent || [];
+  // Not punched but not really absent: week-off on their shift, approved leave,
+  // or outside their employment window (server sets `reason`).
+  const trulyAbsent = absent.filter((u) => !u.reason).length;
+  const REASON = { weekoff: 'Week off', leave: 'On leave', na: 'Not employed', holiday: 'Branch holiday' };
 
   // Combined employee list (present + absent) for the manual-entry picker.
   const employees = useMemo(() => {
@@ -623,10 +715,12 @@ function DayTab() {
           <span className="mb-1 block text-sm font-medium text-slate-700">Date</span>
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-48" />
         </label>
-        <Button onClick={() => openCreate()}>
-          <IconPlus className="h-4 w-4" />
-          Add manual entry
-        </Button>
+        {!readOnly && (
+          <Button onClick={() => openCreate()}>
+            <IconPlus className="h-4 w-4" />
+            Add manual entry
+          </Button>
+        )}
       </div>
 
       {/* Company holiday callout — explains an empty day before the admin reads
@@ -672,7 +766,9 @@ function DayTab() {
               tile drops the alarming red and says why. */}
           <StatCard
             label={summary.holiday ? 'Off (holiday)' : 'Absent'}
-            value={summary.absent?.length ?? 0}
+            value={summary.holiday ? absent.length : trulyAbsent}
+            sub={!summary.holiday && absent.length > trulyAbsent
+              ? `+${absent.length - trulyAbsent} on week-off / leave` : undefined}
             tone={summary.holiday ? 'slate' : 'red'}
             icon={summary.holiday ? <IconGift className="h-5 w-5" /> : <IconBan className="h-5 w-5" />}
           />
@@ -724,8 +820,8 @@ function DayTab() {
                         key={s.id}
                         s={s}
                         onOpenPhoto={setPhoto}
-                        onEdit={openEdit}
-                        onDelete={deleteSession}
+                        onEdit={readOnly ? undefined : openEdit}
+                        onDelete={readOnly ? undefined : deleteSession}
                       />
                     ))}
                   </div>
@@ -741,7 +837,7 @@ function DayTab() {
         <Card className="border-slate-200 bg-slate-50">
           <CardBody>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
-              {summary?.holiday ? 'Off for the holiday' : 'Absent'} · {absent.length}
+              {summary?.holiday ? 'Off for the holiday' : 'Not punched in'} · {absent.length}
             </h2>
             <div className="flex flex-wrap gap-2">
               {absent.map((u) => (
@@ -751,13 +847,20 @@ function DayTab() {
                 >
                   <span className="font-medium text-slate-700">{u.fullName || u.username}</span>
                   <span className="text-xs text-slate-400">@{u.username}</span>
-                  <button
-                    onClick={() => openCreate(u.id)}
-                    title="Add attendance for this employee"
-                    className="ml-1 flex h-5 w-5 items-center justify-center rounded-md text-brand-600 hover:bg-brand-50"
-                  >
-                    <IconPlus className="h-4 w-4" />
-                  </button>
+                  {!summary?.holiday && (
+                    u.reason
+                      ? <Badge tone="gray">{REASON[u.reason] || u.reason}</Badge>
+                      : <Badge tone="red">Absent</Badge>
+                  )}
+                  {!readOnly && (
+                    <button
+                      onClick={() => openCreate(u.id)}
+                      title="Add attendance for this employee"
+                      className="ml-1 flex h-5 w-5 items-center justify-center rounded-md text-brand-600 hover:bg-brand-50"
+                    >
+                      <IconPlus className="h-4 w-4" />
+                    </button>
+                  )}
                 </span>
               ))}
             </div>
@@ -1029,6 +1132,7 @@ function CorrectionsTab() {
   useEffect(() => { load(); }, [load]);
 
   const decide = async (r, decision) => {
+    if (decision === 'approved' && !confirmSkipManager(r)) return;
     let reviewNote = '';
     if (decision === 'rejected') reviewNote = window.prompt('Reason for rejection (optional):', '') ?? '';
     setBusyId(r.id);
@@ -1102,6 +1206,7 @@ function CorrectionsTab() {
                       <td className="max-w-[16rem] px-4 py-3 text-slate-500"><span className="line-clamp-2">{r.reason}</span></td>
                       <td className="px-4 py-3">
                         <Badge tone={STATUS_TONE[r.status] || 'gray'}>{r.status}</Badge>
+                        <div className="mt-1"><ManagerStage stage={r.managerStage} /></div>
                         {r.status === 'rejected' && r.reviewNote && (
                           <p className="mt-1 max-w-[12rem] text-xs text-slate-400">{r.reviewNote}</p>
                         )}
@@ -1138,8 +1243,13 @@ function CorrectionsTab() {
 
 /* =============================================================== Page root */
 
-export default function TeamAttendance() {
-  const [tab, setTab] = useState('month'); // 'month' | 'day'
+export default function TeamAttendance({ scope = 'admin' }) {
+  const team = scope === 'team';
+  const [tab, setTab] = useState('month'); // 'month' | 'day' | 'corrections'
+  const scopeValue = useMemo(
+    () => ({ base: team ? '/attendance/team' : '/attendance/admin', readOnly: team }),
+    [team],
+  );
 
   // Segmented control: active tab lifts on a white pill; inactive is muted.
   const segBtn = (key) =>
@@ -1158,20 +1268,25 @@ export default function TeamAttendance() {
       <button type="button" className={segBtn('day')} onClick={() => setTab('day')}>
         Day View
       </button>
-      <button type="button" className={segBtn('corrections')} onClick={() => setTab('corrections')}>
-        Corrections
-      </button>
+      {/* Managers decide corrections in Team Approvals instead. */}
+      {!team && (
+        <button type="button" className={segBtn('corrections')} onClick={() => setTab('corrections')}>
+          Corrections
+        </button>
+      )}
     </div>
   );
 
   return (
-    <div>
+    <ScopeCtx.Provider value={scopeValue}>
       <PageHeader
-        title="Team Attendance"
-        subtitle="Review monthly roll-ups and daily punch activity across the team."
+        title={team ? 'My Team' : 'Team Attendance'}
+        subtitle={team
+          ? 'Attendance of everyone reporting to you (directly or through your reports) — view only.'
+          : 'Review monthly roll-ups and daily punch activity across the team.'}
         actions={segmented}
       />
       {tab === 'month' ? <MonthTab /> : tab === 'day' ? <DayTab /> : <CorrectionsTab />}
-    </div>
+    </ScopeCtx.Provider>
   );
 }

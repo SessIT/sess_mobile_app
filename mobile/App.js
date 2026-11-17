@@ -33,6 +33,14 @@ import SendNoteScreen from './screens/SendNoteScreen';
 import MoreSettingsScreen from './screens/MoreSettingsScreen';
 import LegalScreen from './screens/LegalScreen';
 import SitesScreen from './screens/SitesScreen';
+import TeamApprovalsScreen from './screens/TeamApprovalsScreen';
+import PayslipsScreen from './screens/PayslipsScreen';
+import AnnouncementsScreen from './screens/AnnouncementsScreen';
+import HelpdeskScreen from './screens/HelpdeskScreen';
+import MyDocumentsScreen from './screens/MyDocumentsScreen';
+import ResignationScreen from './screens/ResignationScreen';
+import TrainingScreen from './screens/TrainingScreen';
+import InterviewsScreen from './screens/InterviewsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -96,6 +104,14 @@ export default function App() {
         <Stack.Screen name="Expense" component={ExpenseScreen} />
         <Stack.Screen name="ExpenseApprovals" component={ExpenseApprovalsScreen} />
         <Stack.Screen name="Sites" component={SitesScreen} />
+        <Stack.Screen name="TeamApprovals" component={TeamApprovalsScreen} />
+        <Stack.Screen name="Payslips" component={PayslipsScreen} />
+        <Stack.Screen name="Announcements" component={AnnouncementsScreen} />
+        <Stack.Screen name="Helpdesk" component={HelpdeskScreen} />
+        <Stack.Screen name="MyDocuments" component={MyDocumentsScreen} />
+        <Stack.Screen name="Resignation" component={ResignationScreen} />
+        <Stack.Screen name="Training" component={TrainingScreen} />
+        <Stack.Screen name="Interviews" component={InterviewsScreen} />
         <Stack.Screen name="TaskList" component={TaskListScreen} />
         <Stack.Screen name="Notes" component={NotesScreen} />
         <Stack.Screen name="SendNote" component={SendNoteScreen} />

@@ -8,12 +8,11 @@ import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { Calendar } from 'react-native-calendars';
 import { File } from 'expo-file-system';
-import { api, apiUpload, API_URL } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip, PrimaryButton } from '../components/ui';
+import { api, apiUpload, fileUrl } from '../lib/api';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, ManagerStage } from '../components/ui';
 import { COLORS, RADIUS } from '../lib/theme';
 import { useKeyboard } from '../lib/useKeyboard';
 
-const BASE = API_URL.replace('/api', '');
 
 // Fallback list — the same six the client specified. /expenses/types is the
 // source of truth so the set can grow server-side without a new build.
@@ -92,7 +91,7 @@ export default function ExpenseScreen({ navigation }) {
   // The in-app viewer only knows how to draw images, so a PDF bill is handed to
   // whatever the phone uses to read PDFs.
   const openBill = (billPath) => {
-    const url = `${BASE}/${billPath}`;
+    const url = fileUrl(billPath);
     if (isPdfBill(billPath)) {
       Linking.openURL(url).catch(() => Alert.alert('Cannot open', 'No app on this phone can open a PDF bill.'));
       return;
@@ -228,16 +227,17 @@ export default function ExpenseScreen({ navigation }) {
                               <Text style={styles.pdfThumbText}>PDF bill</Text>
                             </View>
                           ) : (
-                            <Image source={{ uri: `${BASE}/${b}` }} style={styles.thumb} resizeMode="cover" />
+                            <Image source={{ uri: fileUrl(b) }} style={styles.thumb} resizeMode="cover" />
                           )}
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
                   ) : null}
 
+                  <ManagerStage stage={r.managerStage} />
                   {r.reviewNote ? (
                     <Text style={[styles.reviewNote, r.status === 'rejected' && { color: COLORS.red }]}>
-                      Admin: {r.reviewNote}
+                      {r.managerStage?.state === 'rejected' ? 'Manager' : 'Admin'}: {r.reviewNote}
                     </Text>
                   ) : null}
                 </Card>

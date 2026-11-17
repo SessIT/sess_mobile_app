@@ -21,6 +21,8 @@ import {
   ErrorNote,
   PageHeader,
   cx,
+  ManagerStage,
+  confirmSkipManager,
 } from '../components/ui';
 import {
   IconCheckCircle,
@@ -115,6 +117,7 @@ export default function Expenses() {
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
   const decide = async (r, decision) => {
+    if (decision === 'approved' && !confirmSkipManager(r)) return;
     let reviewNote = '';
     if (decision === 'rejected') reviewNote = window.prompt('Reason for rejection (optional):', '') ?? '';
     setBusyId(r.id);
@@ -266,6 +269,7 @@ export default function Expenses() {
                         <td className="whitespace-nowrap px-4 py-3 text-slate-600">{fmtDate(r.createdAt)}</td>
                         <td className="px-4 py-3">
                           <Badge tone={STATUS_TONE[r.status] || 'gray'}>{r.status}</Badge>
+                          <div className="mt-1"><ManagerStage stage={r.managerStage} /></div>
                           {r.status === 'rejected' && r.reviewNote && (
                             <p className="mt-1 max-w-[12rem] text-xs text-slate-400">{r.reviewNote}</p>
                           )}

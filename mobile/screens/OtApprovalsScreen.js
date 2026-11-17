@@ -8,7 +8,7 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Calendar } from 'react-native-calendars';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip, PrimaryButton , SheetOverlay} from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, SheetOverlay, ManagerStage } from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -200,6 +200,7 @@ export default function OtApprovalsScreen({ navigation }) {
                     <View style={styles.hoursPill}><Text style={styles.hoursText}>{fmtHrs(r.hours)}</Text></View>
                   </View>
                   {r.reason ? <Text style={styles.reason}>“{r.reason}”</Text> : null}
+                  <ManagerStage stage={r.managerStage} />
 
                   {r.status === 'pending' && (
                     <View style={styles.actions}>

@@ -24,19 +24,57 @@ const timeAgo = (iso) => {
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 };
 
-// Notification center — WhatsApp-style: each unread conversation is a
-// notification card with the message preview; tapping opens THAT thread.
+// Icon + tint per update kind (server `kind`).
+const KIND_ICON = {
+  leave: ['beach-access', COLORS.purple, COLORS.purpleSoft],
+  ot: ['more-time', COLORS.primary, COLORS.indigoSoft],
+  compoff: ['redeem', COLORS.teal, COLORS.tealSoft],
+  expense: ['receipt-long', COLORS.orange, COLORS.orangeSoft],
+  correction: ['edit-calendar', COLORS.red, COLORS.redSoft],
+  payroll: ['payments', COLORS.green, COLORS.greenSoft],
+  announcement: ['campaign', COLORS.orange, COLORS.orangeSoft],
+  helpdesk: ['support-agent', COLORS.primary, COLORS.indigoSoft],
+  asset: ['inventory-2', COLORS.teal, COLORS.tealSoft],
+  document: ['folder-shared', COLORS.primary, COLORS.indigoSoft],
+  exit: ['exit-to-app', COLORS.red, COLORS.redSoft],
+  recruitment: ['record-voice-over', COLORS.primary, COLORS.indigoSoft],
+  training: ['school', COLORS.green, COLORS.greenSoft],
+};
+
+// Notification center:
+//   UPDATES  — approvals, decisions, payslips (server inbox; also pushed to the phone)
+//   MESSAGES — WhatsApp-style unread conversations; tapping opens THAT thread.
 export default function NotificationsScreen({ navigation }) {
   const [items, setItems] = useState(null);
+  const [updates, setUpdates] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await api('/chat/conversations');
-      setItems((res.conversations || []).filter((c) => c.unread > 0));
+      const [chat, inbox] = await Promise.all([
+        api('/chat/conversations'),
+        api('/notifications').catch(() => ({ items: [] })),
+      ]);
+      setItems((chat.conversations || []).filter((c) => c.unread > 0));
+      setUpdates(inbox.items || []);
     } catch { setItems((prev) => prev ?? []); }
     finally { setRefreshing(false); }
   }, []);
+
+  const unreadUpdates = updates.filter((u) => !u.readAt).length;
+
+  const openUpdate = (u) => {
+    if (!u.readAt) {
+      setUpdates((prev) => prev.map((x) => (x.id === u.id ? { ...x, readAt: new Date().toISOString() } : x)));
+      api('/notifications/read', { method: 'POST', body: JSON.stringify({ ids: [u.id] }) }).catch(() => {});
+    }
+    if (u.data?.screen) navigation.navigate(u.data.screen, u.data.params);
+  };
+
+  const markAllRead = () => {
+    setUpdates((prev) => prev.map((x) => ({ ...x, readAt: x.readAt || new Date().toISOString() })));
+    api('/notifications/read', { method: 'POST', body: JSON.stringify({ all: true }) }).catch(() => {});
+  };
 
   useEffect(() => {
     const unsub = navigation.addListener('focus', load);
@@ -56,7 +94,9 @@ export default function NotificationsScreen({ navigation }) {
       <StatusBar style="light" />
       <GradientHeader
         title="Notifications"
-        subtitle={items ? `${items.length} unread conversation${items.length === 1 ? '' : 's'}` : 'Loading…'}
+        subtitle={items
+          ? `${unreadUpdates} new update${unreadUpdates === 1 ? '' : 's'} · ${items.length} unread chat${items.length === 1 ? '' : 's'}`
+          : 'Loading…'}
         onBack={() => navigation.goBack()}
       />
 
@@ -70,8 +110,40 @@ export default function NotificationsScreen({ navigation }) {
           contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
         >
+          {/* Updates (server inbox) */}
+          <SectionLabel
+            text="UPDATES"
+            style={{ marginTop: 0 }}
+            right={unreadUpdates > 0 ? (
+              <TouchableOpacity onPress={markAllRead}><Text style={styles.markAll}>Mark all read</Text></TouchableOpacity>
+            ) : null}
+          />
+          {updates.length === 0 ? (
+            <Text style={styles.noUpdates}>Approvals, decisions and payslips will show up here.</Text>
+          ) : (
+            updates.slice(0, 30).map((u) => {
+              const [icon, c, soft] = KIND_ICON[u.kind] || ['notifications', COLORS.primary, COLORS.indigoSoft];
+              return (
+                <TouchableOpacity key={u.id} activeOpacity={0.8} onPress={() => openUpdate(u)}
+                  style={[styles.updCard, !u.readAt && styles.updUnread]}>
+                  <View style={[styles.updIcon, { backgroundColor: soft }]}>
+                    <MaterialIcons name={icon} size={19} color={c} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <View style={styles.msgTop}>
+                      <Text style={[styles.updTitle, !u.readAt && { fontWeight: '800' }]} numberOfLines={2}>{u.title}</Text>
+                      <Text style={styles.time}>{timeAgo(u.createdAt)}</Text>
+                    </View>
+                    {u.body ? <Text style={styles.preview} numberOfLines={2}>{u.body}</Text> : null}
+                  </View>
+                  {!u.readAt && <View style={styles.updDot} />}
+                </TouchableOpacity>
+              );
+            })
+          )}
+
           {/* Unread messages */}
-          <SectionLabel text="MESSAGES" style={{ marginTop: 0 }} />
+          <SectionLabel text="MESSAGES" />
           {items.length === 0 ? (
             <Card style={styles.caughtUp}>
               <Text style={{ fontSize: 40 }}>🎉</Text>
@@ -152,6 +224,17 @@ export default function NotificationsScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
+
+  markAll: { fontSize: 11.5, fontWeight: '800', color: COLORS.primary },
+  noUpdates: { fontSize: 12, color: COLORS.faint, marginBottom: 6 },
+  updCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 11,
+    backgroundColor: COLORS.card, borderRadius: RADIUS.card, padding: 12, marginBottom: 8, ...SHADOW.card,
+  },
+  updUnread: { borderLeftWidth: 3, borderLeftColor: COLORS.primary },
+  updIcon: { width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  updTitle: { flex: 1, fontSize: 13.5, fontWeight: '600', color: COLORS.ink },
+  updDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.primary },
 
   caughtUp: { alignItems: 'center', paddingVertical: 30, gap: 6 },
   caughtUpTitle: { fontSize: 15, fontWeight: '800', color: COLORS.ink },

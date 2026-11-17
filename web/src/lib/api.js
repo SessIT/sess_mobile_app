@@ -52,11 +52,15 @@ export function setStoredAuth(auth) {
   else localStorage.removeItem(STORAGE_KEY);
 }
 
-/** Turn a stored file path (e.g. "uploads/attendance/u1_123.jpg") into an absolute URL. */
+/** Turn a stored file path (e.g. "uploads/attendance/u1_123.jpg") into an absolute URL.
+ * /uploads is authenticated and <img> tags can't send headers, so the access
+ * token rides along as ?t=. */
 export function fileUrl(p) {
   if (!p) return null;
   if (/^https?:\/\//i.test(p)) return p;
-  return `${FILE_BASE}/${String(p).replace(/^\/+/, '')}`;
+  const base = `${FILE_BASE}/${String(p).replace(/^\/+/, '')}`;
+  const token = getStoredAuth()?.accessToken;
+  return token ? `${base}?t=${encodeURIComponent(token)}` : base;
 }
 
 /**
@@ -87,6 +91,31 @@ export async function api(path, options = {}) {
   if (!res.ok) throw new Error(data.message || `Request failed (${res.status})`);
   return data;
 }
+
+/** Authenticated file download (CSV / TXT registers): fetch with the bearer
+ *  token, then save under the server's Content-Disposition filename. */
+export async function apiDownload(path, fallbackName = 'download') {
+  const auth = getStoredAuth();
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: auth?.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || `Download failed (${res.status})`);
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Printable payslip page, opened in a new tab (token rides as ?t=). */
+export const payslipUrl = (id) => fileUrl(`api/payroll/payslips/${id}/html`);
 
 // Convenience helpers
 export const apiGet = (path) => api(path);

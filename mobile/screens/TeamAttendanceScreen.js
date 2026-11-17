@@ -10,7 +10,7 @@ import { Calendar } from 'react-native-calendars';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, SectionLabel , SheetOverlay} from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, SectionLabel, SheetOverlay, ManagerStage } from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS, SHADOW } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -37,6 +37,7 @@ const STATUS = {
   weekoff: { label: 'Week Off', color: COLORS.faint, bg: '#F3F4F6' },
   holiday: { label: 'Holiday', color: COLORS.teal, bg: COLORS.tealSoft },
   future: { label: '—', color: '#D1D5DB', bg: '#FAFAFA' },
+  na: { label: 'Not employed', color: COLORS.faint, bg: '#F3F4F6' },
 };
 // True late (>= 09:41) shows orange; on-time and grace arrivals stay green (present).
 const LATE_VIS = { label: 'Late', color: COLORS.orange, bg: COLORS.orangeSoft };
@@ -59,7 +60,16 @@ const fmtT12 = (d) => d
   ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
   : '—';
 
-export default function TeamAttendanceScreen({ navigation }) {
+// Absent chips that aren't really absences (server-side `reason`).
+const ABSENT_REASON = { weekoff: 'Week off', leave: 'On leave', na: 'Not employed', holiday: 'Branch holiday' };
+
+/* Two modes, one screen:
+ *   admin (default)       — everyone, with editing and the Corrections tab
+ *   { scope: 'team' }     — a reporting manager's team, read-only
+ * Both hit endpoints with identical response shapes. */
+export default function TeamAttendanceScreen({ navigation, route }) {
+  const teamScope = route?.params?.scope === 'team';
+  const BASE = teamScope ? '/attendance/team' : '/attendance/admin';
   const [mode, setMode] = useState('day'); // 'day' | 'month' | 'corrections'
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null); // null = All
@@ -92,17 +102,18 @@ export default function TeamAttendanceScreen({ navigation }) {
   const [corrBusyId, setCorrBusyId] = useState(null);
 
   useEffect(() => {
-    api('/users').then(setUsers).catch(() => {});
-  }, []);
+    api(teamScope ? '/team/members' : '/users').then(setUsers).catch(() => {});
+  }, [teamScope]);
 
   // The segment badge must stay right even when the tab is filtered to
   // approved/rejected, or never opened at all — so count it separately.
   const loadPendingCount = useCallback(async () => {
+    if (teamScope) return; // managers review corrections in Team Approvals
     try {
       const res = await api('/attendance/admin/corrections?status=pending');
       setCorrPending((res.requests || []).length);
     } catch { /* badge only — never block the screen on it */ }
-  }, []);
+  }, [teamScope]);
 
   useEffect(() => { loadPendingCount(); }, [loadPendingCount]);
 
@@ -121,14 +132,14 @@ export default function TeamAttendanceScreen({ navigation }) {
         // the window — otherwise the default "today" filter hides the queue.
         loadPendingCount();
       } else if (mode === 'day') {
-        setData(await api(`/attendance/admin/day?date=${date}`));
+        setData(await api(`${BASE}/day?date=${date}`));
       } else {
         const q = selected ? `&userId=${selected.id}` : '';
-        setData(await api(`/attendance/admin/month?month=${month}${q}`));
+        setData(await api(`${BASE}/month?month=${month}${q}`));
       }
     } catch (e) { Alert.alert('Error', e.message); setData(null); setCorrections([]); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [mode, date, month, selected, corrFilter, corrFrom, corrTo, loadPendingCount]);
+  }, [BASE, mode, date, month, selected, corrFilter, corrFrom, corrTo, loadPendingCount]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -207,7 +218,7 @@ export default function TeamAttendanceScreen({ navigation }) {
     setManageLoading(true);
     setManageSessions([]);
     try {
-      const res = await api(`/attendance/admin/day-sessions?date=${mDate}&userId=${user.id}`);
+      const res = await api(`${BASE}/day-sessions?date=${mDate}&userId=${user.id}`);
       setManageSessions(res.sessions || []);
     } catch (e) { Alert.alert('Error', e.message); }
     finally { setManageLoading(false); }
@@ -215,7 +226,7 @@ export default function TeamAttendanceScreen({ navigation }) {
 
   const refreshManage = async (user, mDate = manageDate) => {
     try {
-      const res = await api(`/attendance/admin/day-sessions?date=${mDate}&userId=${user.id}`);
+      const res = await api(`${BASE}/day-sessions?date=${mDate}&userId=${user.id}`);
       setManageSessions(res.sessions || []);
     } catch {}
   };
@@ -310,7 +321,8 @@ export default function TeamAttendanceScreen({ navigation }) {
       <StatusBar style="light" />
 
       <GradientHeader
-        title="Team Attendance"
+        title={teamScope ? 'My Team' : 'Team Attendance'}
+        subtitle={teamScope ? 'Your reporting team · view only' : undefined}
         onBack={() => navigation.goBack()}
         right={
           <TouchableOpacity style={[styles.exportBtn, (!data || exporting) && { opacity: 0.5 }]}
@@ -323,7 +335,7 @@ export default function TeamAttendanceScreen({ navigation }) {
       >
         {/* Mode toggle */}
         <View style={styles.segment}>
-          {['day', 'month', 'corrections'].map(mv => (
+          {(teamScope ? ['day', 'month'] : ['day', 'month', 'corrections']).map(mv => (
             <TouchableOpacity key={mv} style={[styles.segBtn, mode === mv && styles.segBtnActive]}
               onPress={() => setMode(mv)}>
               <View style={styles.segInner}>
@@ -463,18 +475,24 @@ export default function TeamAttendanceScreen({ navigation }) {
                 const off = !!data.holiday;
                 return (
                   <>
-                    <SectionLabel text={`${off ? 'OFF FOR THE HOLIDAY' : 'ABSENT'} (${dayAbsent.length})`}
-                      right={<Text style={styles.hint} numberOfLines={1}>
+                    <SectionLabel text={`${off ? 'OFF FOR THE HOLIDAY' : 'NOT PUNCHED IN'} (${dayAbsent.length})`}
+                      right={teamScope ? null : <Text style={styles.hint} numberOfLines={1}>
                         {off ? 'tap if they worked' : 'tap to add attendance'}
                       </Text>} />
                     <View style={styles.absentWrap}>
-                      {dayAbsent.map(a => (
-                        <TouchableOpacity key={a.id} style={[styles.absentChip, off && styles.offChip]} activeOpacity={0.8}
-                          onPress={() => openCreate(a)}>
-                          <MaterialIcons name="add" size={14} color={off ? COLORS.teal : COLORS.red} />
-                          <Text style={[styles.absentText, off && styles.offText]}>{a.fullName || a.username}</Text>
-                        </TouchableOpacity>
-                      ))}
+                      {dayAbsent.map(a => {
+                        // Week-off / leave / not-yet-joined aren't absences — muted chip.
+                        const muted = off || !!a.reason;
+                        return (
+                          <TouchableOpacity key={a.id} style={[styles.absentChip, muted && styles.offChip]} activeOpacity={0.8}
+                            disabled={teamScope} onPress={() => openCreate(a)}>
+                            {!teamScope && <MaterialIcons name="add" size={14} color={muted ? COLORS.teal : COLORS.red} />}
+                            <Text style={[styles.absentText, muted && styles.offText]}>
+                              {a.fullName || a.username}{!off && a.reason ? ` · ${ABSENT_REASON[a.reason] || a.reason}` : ''}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                   </>
                 );
@@ -650,6 +668,7 @@ export default function TeamAttendanceScreen({ navigation }) {
                       <Text style={styles.corrText}>{fmtT12(r.requestedIn)} → {fmtT12(r.requestedOut)}</Text>
                     </View>
                     {r.reason ? <Text style={styles.reason}>“{r.reason}”</Text> : null}
+                    <ManagerStage stage={r.managerStage} />
                     {r.status !== 'pending' && r.reviewedBy ? (
                       <Text style={styles.reviewLine}>
                         {st.label} by {r.reviewedBy.fullName || r.reviewedBy.username}
@@ -809,19 +828,25 @@ export default function TeamAttendanceScreen({ navigation }) {
                       </Text>
                       <Text style={styles.mSessionSite}>{s.siteName || 'SESS'}{s.workingHours != null ? ` • ${fmtH(s.workingHours)}` : ''}</Text>
                     </View>
-                    <TouchableOpacity style={styles.mIconBtn} onPress={() => openEdit(s, manage)}>
-                      <MaterialIcons name="edit" size={18} color={COLORS.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.mIconBtn} onPress={() => deleteSession(s, manage)}>
-                      <MaterialIcons name="delete-outline" size={18} color={COLORS.red} />
-                    </TouchableOpacity>
+                    {!teamScope && (
+                      <>
+                        <TouchableOpacity style={styles.mIconBtn} onPress={() => openEdit(s, manage)}>
+                          <MaterialIcons name="edit" size={18} color={COLORS.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.mIconBtn} onPress={() => deleteSession(s, manage)}>
+                          <MaterialIcons name="delete-outline" size={18} color={COLORS.red} />
+                        </TouchableOpacity>
+                      </>
+                    )}
                   </View>
                 ))}
               </ScrollView>
             )}
 
-            <PrimaryButton title="Add session" icon="add" style={{ marginTop: 6 }}
-              onPress={() => openCreate(manage, manageDate)} />
+            {!teamScope && (
+              <PrimaryButton title="Add session" icon="add" style={{ marginTop: 6 }}
+                onPress={() => openCreate(manage, manageDate)} />
+            )}
             <TouchableOpacity style={styles.sheetClose} onPress={() => setManage(null)}>
               <Text style={styles.sheetCloseText}>Close</Text>
             </TouchableOpacity>

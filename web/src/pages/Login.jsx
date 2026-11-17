@@ -22,11 +22,14 @@ export default function Login() {
     setError('');
     try {
       const data = await login(username.trim(), password);
-      if (!data.roles?.includes(ADMIN_ROLE)) {
-        setError('This account is not an admin. Use the mobile app for employee login.');
+      const admin = data.roles?.includes(ADMIN_ROLE);
+      const delegated = (data.permissions || []).length > 0; // e.g. HR with some areas
+      if (!admin && !delegated && !data.isManager) {
+        setError('This account has no console access. Use the mobile app, or ask an Admin to grant your role access.');
         return;
       }
-      navigate(from, { replace: true });
+      // Pages the user can't open redirect to their first allowed area.
+      navigate(admin || delegated ? from : '/my-team', { replace: true });
     } catch (err) {
       setError(err.message || 'Sign in failed');
     } finally {

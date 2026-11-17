@@ -100,6 +100,35 @@ export function Badge({ tone = 'slate', children, className }) {
   );
 }
 
+/* ------------------------------------------------------- ManagerStage */
+// First-level (reporting manager) stage of a request — server `managerStage`.
+// Renders nothing when there is no manager or the admin decided directly.
+export function ManagerStage({ stage, className }) {
+  if (!stage || stage.state === 'none' || stage.state === 'skipped') return null;
+  const who = stage.by || stage.manager || 'manager';
+  const map = {
+    awaiting: { tone: 'amber', text: `Awaiting manager${stage.manager ? ` · ${stage.manager}` : ''}` },
+    approved: { tone: 'green', text: `Manager approved · ${who}` },
+    rejected: { tone: 'red', text: `Manager rejected · ${who}` },
+  };
+  const m = map[stage.state];
+  if (!m) return null;
+  return (
+    <Badge tone={m.tone} className={className}>
+      <span title={stage.note || undefined}>{m.text}</span>
+    </Badge>
+  );
+}
+
+// Admin final approval while the manager hasn't decided yet: allowed (manager
+// away, urgent), but never by accident.
+export function confirmSkipManager(r) {
+  if (r?.managerStage?.state !== 'awaiting') return true;
+  return window.confirm(
+    `${r.managerStage.manager || 'The reporting manager'} has not reviewed this request yet.\n\nApprove it anyway as admin?`
+  );
+}
+
 /* ------------------------------------------------------------ StatCard */
 export function StatCard({ label, value, sub, tone = 'slate', icon }) {
   const tones = {

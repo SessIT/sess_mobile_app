@@ -4,6 +4,8 @@ const fs = require('fs');
 const multer = require('multer');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { withManagerStage } = require('../lib/approvals');
+const { requestCreated, finalDecided } = require('../lib/requestEvents');
 const router = express.Router();
 const ADMIN = 'Admin';
 
@@ -58,6 +60,7 @@ const includeUser = {
 // Every row leaves through here so the employee and admin lists agree on shape.
 const shape = (r) => ({
   id: r.id,
+  userId: r.userId,
   type: r.type,
   details: r.details,
   billPath: r.billPath, // first bill — kept for older clients
@@ -168,7 +171,7 @@ router.get('/my', async (req, res) => {
       prisma.expenseRequest.count({ where: { userId, status: 'pending' } }),
       prisma.expenseRequest.count({ where: { userId, status: 'approved' } }),
     ]);
-    res.json({ requests: requests.map(shape), totals: { pending, approved } });
+    res.json({ requests: await withManagerStage('expense', requests.map(shape)), totals: { pending, approved } });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -205,6 +208,7 @@ router.post('/', async (req, res) => {
         status: 'pending',
       },
     });
+    requestCreated('expense', created);
     res.status(201).json(shape(created));
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -247,7 +251,7 @@ router.get('/requests', requireRole(ADMIN), async (req, res) => {
       take: 500,
       include: includeUser,
     });
-    res.json({ requests: requests.map(shape) });
+    res.json({ requests: await withManagerStage('expense', requests.map(shape)) });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -276,6 +280,7 @@ router.patch('/requests/:id/decision', requireRole(ADMIN), async (req, res) => {
       },
       include: includeUser,
     });
+    finalDecided('expense', updated, updated.status);
     res.json(shape(updated));
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });

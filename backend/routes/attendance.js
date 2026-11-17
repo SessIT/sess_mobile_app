@@ -1,14 +1,23 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const multer = require('multer');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const {
+  shiftForUser, loadShiftResolver, isEmployedOn,
+  weekdayOf, isWeekOff, lateLevelOf, isLateLevel, dayFlags,
+} = require('../lib/shifts');
+const { MONTH, currentMonthIST, assertUnlocked, monthLabel } = require('../lib/attendanceLock');
+const { requireManager } = require('../lib/team');
+const { withManagerStage } = require('../lib/approvals');
+const { holidaysByBranch, holidayMapFor, branchOfUser } = require('../lib/holidays');
+const { requestCreated, finalDecided } = require('../lib/requestEvents');
 const router = express.Router();
 const ADMIN = 'Admin';
 
-// Standard paid working day. Required hours for a period = working days × this.
-// Single source of truth so web + mobile show the same target.
-const HOURS_PER_DAY = 8;
+// Lateness, week-offs and required hours per day all come from the employee's
+// shift (lib/shifts.js) — nothing here assumes 09:30, Sunday or 8 h any more.
 
 router.use(requireAuth);
 
@@ -22,37 +31,58 @@ function savePhoto(userId, base64) {
   return 'uploads/attendance/' + filename;
 }
 
+// Selfies arrive as a multipart `photo` part so the global JSON body limit can
+// stay small. Memory storage on purpose: the buffer is only written to disk
+// AFTER the open-session and geofence checks pass, so a rejected punch leaves
+// no orphan file. Non-multipart requests (older app builds still sending
+// photoBase64 JSON) pass through multer untouched and hit the legacy path.
+const punchUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\//.test(String(file.mimetype || '')) && file.mimetype !== 'image/svg+xml')
+      return cb(null, true);
+    cb(new Error('Punch photo must be an image'));
+  },
+}).single('photo');
+
+const punchPhotoMiddleware = (req, res, next) =>
+  punchUpload(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Punch photo is too large (max 10 MB)'
+        : err.message || 'Photo upload failed';
+      return res.status(400).json({ message: msg });
+    }
+    next();
+  });
+
+// Store the selfie from whichever channel it came in on; null when the punch
+// carried no photo at all.
+function storePunchPhoto(req) {
+  if (req.file?.buffer) {
+    const filename = 'u' + req.user.sub + '_' + Date.now() + '.jpg';
+    fs.writeFileSync(path.join(dir, filename), req.file.buffer);
+    return 'uploads/attendance/' + filename;
+  }
+  return savePhoto(req.user.sub, req.body?.photoBase64);
+}
+
 function todayWindowIST() {
   const now = new Date();
   const istNow = new Date(now.getTime() + 5.5 * 3600 * 1000);
   const y = istNow.getUTCFullYear(), m = istNow.getUTCMonth(), d = istNow.getUTCDate();
   const start = new Date(Date.UTC(y, m, d, -5, -30));
   const end = new Date(start.getTime() + 24 * 3600 * 1000);
-  // On-time cutoff 09:30 IST = 04:00 UTC. After this the first punch is flagged late.
-  const lateCutoff = new Date(Date.UTC(y, m, d, 4, 0));
-  return { start, end, lateCutoff };
+  return { start, end };
 }
 
-/* Arrival policy (IST, based on the FIRST punch-in of the day):
- *   <= 09:30            -> 'ontime' (present, green, no tag)
- *   09:31 .. 09:40      -> 'grace'  (present, green, LATE tag) — 10 min grace
- *   >= 09:41            -> 'late'   (late, amber, LATE tag)
- * lateLevelOf() derives this from a stored punchInTime, so it stays correct
- * for historical rows without a DB migration. */
-const ON_TIME_MIN = 9 * 60 + 40;   // 09:30
-const GRACE_END_MIN = 9 * 60 + 40; // 09:40
-const istMinutesOfDay = (d) => {
-  const ist = new Date(new Date(d).getTime() + 5.5 * 3600 * 1000);
-  return ist.getUTCHours() * 60 + ist.getUTCMinutes();
-};
-const lateLevelOf = (firstIn) => {
-  if (!firstIn) return null;
-  const mins = istMinutesOfDay(firstIn);
-  if (mins <= ON_TIME_MIN) return 'ontime';
-  if (mins <= GRACE_END_MIN) return 'grace';
-  return 'late';
-};
-const isLateLevel = (lvl) => lvl === 'grace' || lvl === 'late';
+/* Arrival policy (IST, FIRST punch-in of the day, per the employee's shift):
+ *   <= start + grace  -> 'ontime'
+ *   later             -> 'late'
+ * lateLevelOf() derives this from a stored punchInTime, so it stays correct for
+ * historical rows. The default "General Shift" (09:30 + 10 min) reproduces the
+ * rule that was hardcoded here before shifts existed. */
 
 const num = (v) => (v !== undefined && v !== null && v !== '' ? parseFloat(v) : null);
 const finiteOr = (v, fb = null) => (Number.isFinite(v) ? v : fb);
@@ -131,9 +161,9 @@ router.get('/today', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
-router.post('/punch-in', async (req, res) => {
+router.post('/punch-in', punchPhotoMiddleware, async (req, res) => {
   try {
-    const { start, end, lateCutoff } = todayWindowIST();
+    const { start, end } = todayWindowIST();
     // Multi-punch: open session irundha mattum block (out pannama in panna mudiyadhu)
     const openSession = await prisma.attendanceSession.findFirst({
       where: { userId: req.user.sub, punchInTime: { gte: start, lt: end }, punchOutTime: null },
@@ -144,7 +174,7 @@ router.post('/punch-in', async (req, res) => {
     });
 
     const now = new Date();
-    const { lat, lng, acc, photoBase64, address, siteName } = req.body || {};
+    const { lat, lng, acc, address, siteName } = req.body || {};
     const pLat = num(lat), pLng = num(lng);
     if (!validPunchCoords(pLat, pLng))
       return res.status(400).json({ message: 'A valid location is required for punch in' });
@@ -153,14 +183,15 @@ router.post('/punch-in', async (req, res) => {
     const gate = await checkGeofence(pLat, pLng, acc);
     if (!gate.ok) return res.status(403).json(geofenceError(gate));
 
+    const shift = await shiftForUser(req.user.sub);
     const session = await prisma.attendanceSession.create({
       data: {
         userId: req.user.sub,
         punchInTime: now,
         punchInLat: pLat, punchInLng: pLng, punchInAcc: finiteOr(num(acc)),
-        punchInPhoto: savePhoto(req.user.sub, photoBase64),
+        punchInPhoto: storePunchPhoto(req),
         punchInAddress: cleanAddress(address),
-        isLate: sessionCount === 0 && now > lateCutoff,
+        isLate: sessionCount === 0 && isLateLevel(lateLevelOf(now, shift)),
         // Matched site name is authoritative; free-text only while the gate is off.
         siteName: gate.site ? gate.site.name : cleanSiteName(siteName),
       },
@@ -169,7 +200,7 @@ router.post('/punch-in', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
-router.post('/punch-out', async (req, res) => {
+router.post('/punch-out', punchPhotoMiddleware, async (req, res) => {
   try {
     const { start, end } = todayWindowIST();
     const session = await prisma.attendanceSession.findFirst({
@@ -179,7 +210,7 @@ router.post('/punch-out', async (req, res) => {
     if (!session) return res.status(400).json({ message: 'No open session. Punch in first.' });
 
     const now = new Date();
-    const { lat, lng, acc, photoBase64, address } = req.body || {};
+    const { lat, lng, acc, address } = req.body || {};
     const pLat = num(lat), pLng = num(lng);
     if (!validPunchCoords(pLat, pLng))
       return res.status(400).json({ message: 'A valid location is required for punch out' });
@@ -194,7 +225,7 @@ router.post('/punch-out', async (req, res) => {
       data: {
         punchOutTime: now,
         punchOutLat: pLat, punchOutLng: pLng, punchOutAcc: finiteOr(num(acc)),
-        punchOutPhoto: savePhoto(req.user.sub, photoBase64),
+        punchOutPhoto: storePunchPhoto(req),
         punchOutAddress: cleanAddress(address),
         workingHours: Math.round(hours * 100) / 100,
       },
@@ -236,9 +267,9 @@ const ymdOrNull = (v) => {
 };
 
 // Approved-leave day sets for a month: Map(userId -> Set('YYYY-MM-DD')) of the
-// non-Sunday days each user is on approved leave (clipped to the month).
-// Used to render leave days on the calendar and to adjust required hours.
-async function approvedLeaveSets(month, userIds) {
+// days each user is on approved leave (clipped to the month), skipping that
+// user's own week-offs. Used to render leave days and adjust required hours.
+async function approvedLeaveSets(month, userIds, resolver) {
   const [y, m] = month.split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
   const monthStart = `${month}-01`;
@@ -260,13 +291,220 @@ async function approvedLeaveSets(month, userIds) {
     const ls = ymdOf(lv.startDate), le = ymdOf(lv.endDate);
     const from = ls < monthStart ? monthStart : ls;
     const to = le > monthEnd ? monthEnd : le;
+    const shift = resolver.forUser(lv.userId);
     for (let t = Date.parse(from + 'T00:00:00Z'); t <= Date.parse(to + 'T00:00:00Z'); t += 86400000) {
-      const dt = new Date(t);
-      if (dt.getUTCDay() === 0) continue; // Sunday is a weekly off, not leave
-      set.add(dt.toISOString().slice(0, 10));
+      const ymd = new Date(t).toISOString().slice(0, 10);
+      if (isWeekOff(shift, ymd)) continue; // a weekly off, not leave
+      set.add(ymd);
     }
   }
   return sets;
+}
+
+/* ---------------- month building (shared by every month view) ---------------- */
+
+function monthFrame(month) {
+  const [y, m] = month.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const start = new Date(`${month}-01T00:00:00+05:30`);
+  const ymds = [];
+  for (let d = 1; d <= daysInMonth; d++) ymds.push(`${month}-${String(d).padStart(2, '0')}`);
+  return {
+    y, m, ymds, start,
+    end: new Date(start.getTime() + daysInMonth * 24 * 3600 * 1000),
+    monthStart: ymds[0], monthEnd: ymds[ymds.length - 1],
+    // OT dates are stored date-only (UTC midnight), so they bound by calendar month.
+    otRange: {
+      gte: new Date(`${month}-01T00:00:00.000Z`),
+      lt: new Date(`${m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`}-01T00:00:00.000Z`),
+    },
+  };
+}
+
+// Sessions (asc) -> { userId: { ymd: { sessions, firstIn, lastOut, hours, sites, open } } }
+function groupSessions(sessions) {
+  const out = {};
+  for (const s of sessions) {
+    const byDay = out[s.userId] || (out[s.userId] = {});
+    const ymd = ymdIST(s.punchInTime);
+    const d = byDay[ymd] || (byDay[ymd] = { sessions: 0, firstIn: s.punchInTime, lastOut: null, hours: 0, sites: [], open: false });
+    d.sessions++;
+    if (s.punchOutTime) { d.lastOut = s.punchOutTime; d.hours += s.workingHours || 0; }
+    else d.open = true;
+    const site = (s.siteName || 'SESS').trim();
+    if (!d.sites.includes(site)) d.sites.push(site);
+  }
+  return out;
+}
+
+/* One employee's month, day by day.
+ * Status precedence: a real punch wins (working a holiday/week-off is
+ * legitimate — that is what comp-off is for); days outside the employment
+ * window are 'na' (never absent); then the shift's week-off; a company holiday
+ * beats approved leave, matching leaves.js countLeaveDays(), which does not
+ * charge a leave day for it; then leave (incl. upcoming), future, absent.
+ * workingDays = employed, non-week-off, non-holiday days up to today — the
+ * days on which an absence is possible. */
+function buildUserDays({ ymds, todayStr, holidays, shift, employment, byDay = {}, leaveSet = new Set() }) {
+  let workingDays = 0;
+  const days = ymds.map((ymd) => {
+    const weekoff = isWeekOff(shift, ymd);
+    const isFuture = ymd > todayStr;
+    const employed = isEmployedOn(employment, ymd);
+    // The name is kept even when a higher-precedence status wins so the UI can
+    // still label the day.
+    const holidayName = holidays.get(ymd) || null;
+    if (employed && !weekoff && !isFuture && !holidayName) workingDays++;
+    const rec = byDay[ymd];
+    const status = rec ? 'present'
+      : !employed ? 'na'
+      : weekoff ? 'weekoff'
+      : holidayName ? 'holiday'
+      : leaveSet.has(ymd) ? 'leave'
+      : isFuture ? 'future'
+      : 'absent';
+    const lateLevel = rec ? lateLevelOf(rec.firstIn, shift) : null;
+    const { earlyOut, halfDay } = dayFlags(shift, ymd, rec, ymd < todayStr);
+    return {
+      date: ymd, weekday: weekdayOf(ymd), status, holidayName,
+      sessions: rec?.sessions || 0,
+      firstIn: rec?.firstIn || null, lastOut: rec?.lastOut || null,
+      hours: rec ? Math.round(rec.hours * 100) / 100 : 0,
+      late: isLateLevel(lateLevel), lateLevel, earlyOut, halfDay,
+      missedPunchOut: !!rec?.open && ymd < todayStr,
+      sites: rec?.sites || [],
+    };
+  });
+  return { days, workingDays };
+}
+
+// Counts behind every stat card. present + late + leave + absent ===
+// workingDays + the days punched on a week-off or holiday: those are genuinely
+// present but are not working days, so they lift the left side above it.
+function dayStats(days, todayStr) {
+  const leave = days.filter((d) => d.status === 'leave' && d.date <= todayStr).length;
+  return {
+    present: days.filter((d) => d.status === 'present' && !d.late).length,
+    late: days.filter((d) => d.late).length,
+    leave,
+    absent: days.filter((d) => d.status === 'absent').length,
+    weekoff: days.filter((d) => d.status === 'weekoff').length,
+    holiday: days.filter((d) => d.status === 'holiday').length,
+    earlyOut: days.filter((d) => d.earlyOut).length,
+    halfDay: days.filter((d) => d.halfDay).length,
+    missedPunchOut: days.filter((d) => d.missedPunchOut).length,
+    hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
+  };
+}
+
+const shiftBrief = (s) => ({
+  id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime,
+  graceMinutes: s.graceMinutes, hoursPerDay: s.hoursPerDay, weekOffDays: s.weekOffDays,
+});
+
+// Register codes, the convention printed muster rolls use:
+//   P present · LT late · HD half day · A absent · L leave · WO week-off ·
+//   H holiday · '' future / not employed
+function dayCode(d) {
+  if (d.status === 'present') return d.halfDay ? 'HD' : d.late ? 'LT' : 'P';
+  return { absent: 'A', leave: 'L', weekoff: 'WO', holiday: 'H' }[d.status] || '';
+}
+
+// Whole-team month summary — what /admin/month returns without a userId, and
+// what a month lock freezes into its snapshot. `onlyIds` narrows it to a
+// manager's team. `withCodes` adds a one-letter-ish status per day for the
+// attendance register report (kept out of the lock snapshot — it isn't needed
+// for payroll and would bloat it).
+async function computeMonthSummary(month, onlyIds = null, { withCodes = false } = {}) {
+  const f = monthFrame(month);
+  const todayStr = ymdIST(new Date());
+  const users = await prisma.user.findMany({
+    where: { isActive: true, ...(onlyIds ? { id: { in: onlyIds } } : {}) },
+    select: { id: true, username: true, fullName: true },
+  });
+  const ids = users.map((u) => u.id);
+  const resolver = await loadShiftResolver(ids);
+  const [sessions, holidayFor, leaveSets, otRows] = await Promise.all([
+    prisma.attendanceSession.findMany({
+      where: { punchInTime: { gte: f.start, lt: f.end }, userId: { in: ids } }, orderBy: { punchInTime: 'asc' },
+    }),
+    holidaysByBranch(f.monthStart, f.monthEnd),
+    approvedLeaveSets(month, ids, resolver),
+    prisma.otRequest.groupBy({
+      by: ['userId'], where: { status: 'approved', date: f.otRange, userId: { in: ids } }, _sum: { hours: true },
+    }),
+  ]);
+  const otByUser = new Map(otRows.map((r) => [r.userId, Math.round((r._sum.hours || 0) * 100) / 100]));
+  const grouped = groupSessions(sessions);
+
+  const summary = users.map((u) => {
+    const shift = resolver.forUser(u.id);
+    const { days, workingDays } = buildUserDays({
+      ymds: f.ymds, todayStr, holidays: holidayFor(resolver.branchOf(u.id)), shift, employment: resolver.employment(u.id),
+      byDay: grouped[u.id], leaveSet: leaveSets.get(u.id),
+    });
+    const st = dayStats(days, todayStr);
+    return {
+      userId: u.id, username: u.username, fullName: u.fullName,
+      shiftName: shift.name,
+      present: st.present, leave: st.leave, absent: st.absent, late: st.late,
+      earlyOut: st.earlyOut, halfDay: st.halfDay, missedPunchOut: st.missedPunchOut,
+      hours: st.hours,
+      otHours: otByUser.get(u.id) || 0, // approved overtime this month
+      workingDays,
+      // hours expected to be physically worked (leave excluded)
+      requiredHours: Math.max(workingDays - st.leave, 0) * shift.hoursPerDay,
+      ...(withCodes ? { codes: days.map(dayCode) } : {}),
+    };
+  }).sort((a, b) => (a.fullName || a.username).localeCompare(b.fullName || b.username));
+
+  // Header figures follow the default shift; each row carries its own.
+  const ref = buildUserDays({ ymds: f.ymds, todayStr, holidays: holidayFor(null), shift: resolver.def, employment: {} });
+  return {
+    month,
+    workingDaysSoFar: ref.workingDays,
+    hoursPerDay: resolver.def.hoursPerDay,
+    requiredHours: ref.workingDays * resolver.def.hoursPerDay, // gross target (before leave)
+    summary,
+  };
+}
+
+// One employee's month detail — /admin/month?userId and /my-month.
+async function computeUserMonth(month, userId) {
+  const f = monthFrame(month);
+  const todayStr = ymdIST(new Date());
+  const resolver = await loadShiftResolver([userId]);
+  const shift = resolver.forUser(userId);
+  const [sessions, holidays, leaveSets, otAgg] = await Promise.all([
+    prisma.attendanceSession.findMany({
+      where: { userId, punchInTime: { gte: f.start, lt: f.end } }, orderBy: { punchInTime: 'asc' },
+    }),
+    holidayMap(f.monthStart, f.monthEnd, resolver.branchOf(userId)),
+    approvedLeaveSets(month, [userId], resolver),
+    prisma.otRequest.aggregate({ where: { userId, status: 'approved', date: f.otRange }, _sum: { hours: true } }),
+  ]);
+  const { days, workingDays } = buildUserDays({
+    ymds: f.ymds, todayStr, holidays, shift, employment: resolver.employment(userId),
+    byDay: groupSessions(sessions)[userId], leaveSet: leaveSets.get(userId),
+  });
+  const stats = dayStats(days, todayStr);
+  stats.otHours = Math.round((otAgg._sum.hours || 0) * 100) / 100;
+  return {
+    month, workingDaysSoFar: workingDays, hoursPerDay: shift.hoursPerDay,
+    requiredHours: Math.max(workingDays - stats.leave, 0) * shift.hoursPerDay,
+    grossRequiredHours: workingDays * shift.hoursPerDay,
+    shift: shiftBrief(shift),
+    stats, days,
+  };
+}
+
+async function lockInfo(month) {
+  const row = await prisma.attendanceLock.findUnique({ where: { month } });
+  if (!row) return { locked: false };
+  const by = row.lockedById
+    ? await prisma.user.findUnique({ where: { id: row.lockedById }, select: { fullName: true, username: true } })
+    : null;
+  return { locked: true, lockedAt: row.lockedAt, lockedBy: by ? (by.fullName || by.username) : null, snapshot: row.snapshot };
 }
 
 // Company holidays in a date range (inclusive): Map('YYYY-MM-DD' -> name).
@@ -274,28 +512,44 @@ async function approvedLeaveSets(month, userIds) {
 // 'YYYY-MM-DD' strings — exactly the way leaves.js countLeaveDays() does. Do NOT
 // push them through the IST offset; that would shift them a day.
 // One query per request: never call this inside a day loop.
-async function holidayMap(startYmd, endYmd = startYmd) {
-  const rows = await prisma.holiday.findMany({
-    where: { date: { gte: dateOnlyUTC(startYmd), lte: dateOnlyUTC(endYmd) } },
-    select: { date: true, name: true },
-  });
-  return new Map(rows.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name]));
+// branchId: company-wide holidays plus that branch's own; null = company-wide only.
+async function holidayMap(startYmd, endYmd = startYmd, branchId = null) {
+  return holidayMapFor(startYmd, endYmd, branchId);
 }
+
+const dateParam = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : ymdIST(new Date()));
 
 // GET /api/attendance/admin/day?date=YYYY-MM-DD — that day, ALL employees
 router.get('/admin/day', requireRole(ADMIN), async (req, res) => {
   try {
-    const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : ymdIST(new Date());
-    const { start, end } = dayWindowIST(dateStr);
-    const [sessions, allUsers, holidays] = await Promise.all([
+    res.json(await computeDay(dateParam(req.query.date)));
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// One day across employees (all, or `onlyIds` for a manager's team).
+async function computeDay(dateStr, onlyIds = null) {
+  const { start, end } = dayWindowIST(dateStr);
+  const scope = onlyIds ? { userId: { in: onlyIds } } : {};
+  {
+    const [sessions, allUsers, holidays, leaves] = await Promise.all([
       prisma.attendanceSession.findMany({
-        where: { punchInTime: { gte: start, lt: end } },
+        where: { punchInTime: { gte: start, lt: end }, ...scope },
         orderBy: { punchInTime: 'asc' },
         include: { user: { select: { id: true, username: true, fullName: true } } },
       }),
-      prisma.user.findMany({ where: { isActive: true }, select: { id: true, username: true, fullName: true } }),
+      prisma.user.findMany({
+        where: { isActive: true, ...(onlyIds ? { id: { in: onlyIds } } : {}) },
+        select: { id: true, username: true, fullName: true },
+      }),
       holidayMap(dateStr),
+      prisma.leaveRequest.findMany({
+        where: { status: 'approved', startDate: { lte: dateOnlyUTC(dateStr) }, endDate: { gte: dateOnlyUTC(dateStr) }, ...scope },
+        select: { userId: true },
+      }),
     ]);
+    const resolver = await loadShiftResolver(allUsers.map((u) => u.id));
+    const branchHolidays = await holidaysByBranch(dateStr);
+    const dayIsOver = dateStr < ymdIST(new Date());
     const byUser = {};
     for (const s of sessions) {
       const u = byUser[s.userId] || (byUser[s.userId] = {
@@ -309,19 +563,105 @@ router.get('/admin/day', requireRole(ADMIN), async (req, res) => {
       if (!u.sites.includes(site)) u.sites.push(site);
     }
     const present = Object.values(byUser).map(u => {
-      const lateLevel = lateLevelOf(u.firstIn);
-      return { ...u, hours: Math.round(u.hours * 100) / 100, lateLevel, late: isLateLevel(lateLevel) };
+      const shift = resolver.forUser(u.userId);
+      const lateLevel = lateLevelOf(u.firstIn, shift);
+      return {
+        ...u, hours: Math.round(u.hours * 100) / 100, lateLevel, late: isLateLevel(lateLevel),
+        ...dayFlags(shift, dateStr, u, dayIsOver), shiftName: shift.name,
+      };
     });
     const ids = new Set(present.map(p => p.userId));
-    const absent = allUsers.filter(u => !ids.has(u.id));
-    // `absent` deliberately still lists everyone who did not punch on a company
-    // holiday — the CSV export and the counts depend on that membership. The
-    // `holiday` field lets the UI label the day instead.
+    const onLeave = new Set(leaves.map((l) => l.userId));
+    // `absent` deliberately still lists everyone who did not punch — the CSV
+    // export and the counts depend on that membership. `reason` tells the UI
+    // which of them are not really absent: their shift's week-off, approved
+    // leave, or outside their employment window. A company holiday is
+    // day-level and comes back in `holiday`.
+    const absent = allUsers.filter(u => !ids.has(u.id)).map((u) => {
+      const shift = resolver.forUser(u.id);
+      const reason = !isEmployedOn(resolver.employment(u.id), dateStr) ? 'na'
+        : isWeekOff(shift, dateStr) ? 'weekoff'
+        : branchHolidays(resolver.branchOf(u.id)).has(dateStr) ? 'holiday' // a holiday for their branch only
+        : onLeave.has(u.id) ? 'leave'
+        : null;
+      return { ...u, reason, shiftName: shift.name };
+    });
     const holidayName = holidays.get(dateStr) || null;
-    res.json({
+    return {
       date: dateStr, present, absent, totalUsers: allUsers.length,
       holiday: holidayName ? { date: dateStr, name: holidayName } : null,
-    });
+    };
+  }
+}
+
+async function daySessions(dateStr, userId, onlyIds = null) {
+  const { start, end } = dayWindowIST(dateStr);
+  const where = { punchInTime: { gte: start, lt: end } };
+  if (onlyIds) where.userId = { in: onlyIds };
+  if (userId) where.userId = userId;
+  const sessions = await prisma.attendanceSession.findMany({
+    where,
+    orderBy: { punchInTime: 'asc' },
+    include: { user: { select: { id: true, username: true, fullName: true } } },
+  });
+  return { date: dateStr, sessions };
+}
+
+/* ==================== MANAGER (MY TEAM) — read-only ====================
+ * Same response shapes as the /admin views, limited to the caller's reporting
+ * subtree (req.teamIds), so both apps reuse their Team Attendance screens. */
+const inTeam = (req, uid) => req.teamIds.includes(uid);
+
+router.get('/team/day', requireManager, async (req, res) => {
+  try {
+    res.json(await computeDay(dateParam(req.query.date), req.teamIds));
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+router.get('/team/day-sessions', requireManager, async (req, res) => {
+  try {
+    const userId = req.query.userId ? Number(req.query.userId) : null;
+    if (userId && !inTeam(req, userId)) return res.status(403).json({ message: 'Not in your team' });
+    res.json(await daySessions(dateParam(req.query.date), userId, req.teamIds));
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+router.get('/team/month', requireManager, async (req, res) => {
+  try {
+    const month = req.query.month;
+    if (!MONTH.test(month || '')) return res.status(400).json({ message: 'month=YYYY-MM required' });
+    const userId = req.query.userId ? Number(req.query.userId) : null;
+    const lock = await lockInfo(month);
+    const lockMeta = { locked: lock.locked, lockedAt: lock.lockedAt || null, lockedBy: lock.lockedBy || null };
+    if (userId) {
+      if (!inTeam(req, userId)) return res.status(403).json({ message: 'Not in your team' });
+      return res.json({ ...(await computeUserMonth(month, userId)), ...lockMeta });
+    }
+    if (lock.locked && lock.snapshot) {
+      const team = new Set(req.teamIds);
+      return res.json({
+        ...lock.snapshot, ...lockMeta,
+        summary: (lock.snapshot.summary || []).filter((r) => team.has(r.userId)),
+      });
+    }
+    res.json({ ...(await computeMonthSummary(month, req.teamIds)), ...lockMeta });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// GET /api/attendance/admin/register?month=YYYY-MM — muster roll: every
+// employee × every day as a status code, plus the month totals.
+router.get('/admin/register', requireRole(ADMIN), async (req, res) => {
+  try {
+    const month = req.query.month;
+    if (!MONTH.test(month || '')) return res.status(400).json({ message: 'month=YYYY-MM required' });
+    // Optional ?branchId= narrows the register to one branch's employees.
+    const branchId = Number(req.query.branchId) || null;
+    const onlyIds = branchId
+      ? (await prisma.user.findMany({ where: { branchId, isActive: true }, select: { id: true } })).map((u) => u.id)
+      : null;
+    const data = await computeMonthSummary(month, onlyIds, { withCodes: true });
+    const lock = await lockInfo(month);
+    res.json({ ...data, days: monthFrame(month).ymds, locked: lock.locked });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -329,171 +669,73 @@ router.get('/admin/day', requireRole(ADMIN), async (req, res) => {
 router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
   try {
     const month = req.query.month;
-    if (!/^\d{4}-\d{2}$/.test(month || ''))
+    if (!MONTH.test(month || ''))
       return res.status(400).json({ message: 'month=YYYY-MM required' });
-    const [y, m] = month.split('-').map(Number);
-    const daysInMonth = new Date(y, m, 0).getDate();
-    const start = new Date(`${month}-01T00:00:00+05:30`);
-    const end = new Date(start.getTime() + daysInMonth * 24 * 3600 * 1000);
     const userId = req.query.userId ? Number(req.query.userId) : null;
-    const todayStr = ymdIST(new Date());
-
-    const where = { punchInTime: { gte: start, lt: end } };
-    if (userId) where.userId = userId;
-    const sessions = await prisma.attendanceSession.findMany({ where, orderBy: { punchInTime: 'asc' } });
-
-    const monthStart = `${month}-01`;
-    const monthEnd = `${month}-${String(daysInMonth).padStart(2, '0')}`;
-    const holidays = await holidayMap(monthStart, monthEnd);
-
-    let workingDaysSoFar = 0;
-    // The actual day keys behind workingDaysSoFar, so a punch can be tested for
-    // membership instead of just counted (see `absent` below).
-    const workingDaySet = new Set();
-    const dayMeta = [];
-    for (let d = 1; d <= daysInMonth; d++) {
-      const ymd = `${month}-${String(d).padStart(2, '0')}`;
-      // Weekday of a calendar day, not of an instant: parse at UTC midnight and read
-      // it back in UTC, the same zone-immune form leaves.js uses. Parsing '+05:30'
-      // and calling getDay() would return the weekday in the SERVER's timezone, so a
-      // UTC host would shift every Sunday to Monday.
-      const wd = new Date(ymd + 'T00:00:00.000Z').getUTCDay();
-      const isWeekoff = wd === 0; // Sunday
-      const isFuture = ymd > todayStr;
-      // The name is kept even when a higher-precedence status wins (a worked
-      // holiday, or one landing on a Sunday) so the UI can still label the day.
-      const holidayName = holidays.get(ymd) || null;
-      // A company holiday is a paid non-working day, like a Sunday. Excluding it
-      // here is what keeps requiredHours correct. A holiday on a Sunday is
-      // already excluded by isWeekoff, so it is never subtracted twice.
-      if (!isWeekoff && !isFuture && !holidayName) { workingDaysSoFar++; workingDaySet.add(ymd); }
-      dayMeta.push({ ymd, weekday: wd, isWeekoff, isFuture, holidayName });
-    }
-
-    // Approved OT hours in the month, per user (shown as the OT column).
-    const otRows = await prisma.otRequest.groupBy({
-      by: ['userId'],
-      where: {
-        status: 'approved',
-        // OT dates are stored date-only (UTC midnight), so bound by calendar month.
-        date: {
-          gte: new Date(`${month}-01T00:00:00.000Z`),
-          lt: new Date(`${m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`}-01T00:00:00.000Z`),
-        },
-        ...(userId ? { userId } : {}),
-      },
-      _sum: { hours: true },
-    });
-    const otByUser = new Map(otRows.map(r => [r.userId, Math.round((r._sum.hours || 0) * 100) / 100]));
+    const lock = await lockInfo(month);
+    const lockMeta = { locked: lock.locked, lockedAt: lock.lockedAt || null, lockedBy: lock.lockedBy || null };
 
     if (!userId) {
-      const users = await prisma.user.findMany({ where: { isActive: true }, select: { id: true, username: true, fullName: true } });
-      const leaveSets = await approvedLeaveSets(month, users.map(u => u.id));
-      const map = {};
-      for (const u of users) map[u.id] = { userId: u.id, username: u.username, fullName: u.fullName, days: new Set(), late: 0, hours: 0 };
-      for (const s of sessions) {
-        const r = map[s.userId]; if (!r) continue;
-        const ymd = ymdIST(s.punchInTime);
-        // Sessions are asc, so the first one seen for a day is the day's first punch.
-        if (!r.days.has(ymd)) {
-          r.days.add(ymd);
-          if (isLateLevel(lateLevelOf(s.punchInTime))) r.late++;
-        }
-        r.hours += s.workingHours || 0;
-      }
-      const summary = Object.values(map).map(r => {
-        // Approved-leave days that fell on a working day up to today and weren't
-        // actually worked (a punch on a leave day counts as present, not leave).
-        // Company holidays are skipped: they are not working days and leaves.js
-        // countLeaveDays() does not charge a leave day for them either.
-        let leave = 0;
-        for (const ymd of (leaveSets.get(r.userId) || [])) {
-          if (ymd <= todayStr && !r.days.has(ymd) && !holidays.has(ymd)) leave++;
-        }
-        // Only punches that land ON a working day can cancel out an absence.
-        // r.days holds every punched day, including week-offs and holidays, which
-        // workingDaysSoFar excludes — subtracting it whole would forgive absences
-        // for someone whose only punch was on a Sunday or a company holiday.
-        let workedWorkingDays = 0;
-        for (const ymd of r.days) if (workingDaySet.has(ymd)) workedWorkingDays++;
-        // Present = on-time days; late is its own bucket; leave is paid time off.
-        // present + late + leave + absent === workingDaysSoFar + the days punched
-        // on a week-off or holiday: those are genuinely present (and are what a
-        // comp-off claim rests on) yet add no working day, so the left side runs
-        // above workingDaysSoFar by exactly that many.
-        const required = Math.max(workingDaysSoFar - leave, 0) * HOURS_PER_DAY;
-        return {
-          userId: r.userId, username: r.username, fullName: r.fullName,
-          present: Math.max(r.days.size - r.late, 0),
-          leave,
-          absent: Math.max(workingDaysSoFar - workedWorkingDays - leave, 0),
-          late: r.late,
-          hours: Math.round(r.hours * 100) / 100,
-          otHours: otByUser.get(r.userId) || 0, // approved overtime this month
-          requiredHours: required, // hours expected to be physically worked (leave excluded)
-        };
-      }).sort((a, b) => (a.fullName || a.username).localeCompare(b.fullName || b.username));
-      return res.json({
-        month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,
-        requiredHours: workingDaysSoFar * HOURS_PER_DAY, // gross target (before leave)
-        summary,
-      });
+      // A locked month serves the summary frozen at lock time, so later shift
+      // edits or data fixes can never move numbers payroll already used.
+      if (lock.locked && lock.snapshot) return res.json({ ...lock.snapshot, ...lockMeta });
+      return res.json({ ...(await computeMonthSummary(month)), ...lockMeta });
     }
+    res.json({ ...(await computeUserMonth(month, userId)), ...lockMeta });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
 
-    const byDay = {};
-    for (const s of sessions) {
-      const ymd = ymdIST(s.punchInTime);
-      const d = byDay[ymd] || (byDay[ymd] = { sessions: 0, firstIn: s.punchInTime, lastOut: null, hours: 0, sites: [] });
-      d.sessions++;
-      if (s.punchOutTime) { d.lastOut = s.punchOutTime; d.hours += s.workingHours || 0; }
-      const site = (s.siteName || 'SESS').trim();
-      if (!d.sites.includes(site)) d.sites.push(site);
-    }
-    const leaveSet = (await approvedLeaveSets(month, [userId])).get(userId) || new Set();
-    const days = dayMeta.map(dm => {
-      const rec = byDay[dm.ymd];
-      const isLeave = leaveSet.has(dm.ymd);
-      // Precedence: a real punch wins (working a holiday is legitimate — that is
-      // what comp-off is for); Sundays are week-off; a company holiday beats
-      // approved leave, matching leaves.js countLeaveDays(), which does not
-      // charge a leave day for it; otherwise approved leave (incl. upcoming)
-      // shows as paid leave before falling back to future/absent.
-      const status = rec ? 'present'
-        : dm.isWeekoff ? 'weekoff'
-        : dm.holidayName ? 'holiday'
-        : isLeave ? 'leave'
-        : dm.isFuture ? 'future'
-        : 'absent';
-      const lateLevel = rec ? lateLevelOf(rec.firstIn) : null;
-      return {
-        date: dm.ymd, weekday: dm.weekday, status, holidayName: dm.holidayName,
-        sessions: rec?.sessions || 0,
-        firstIn: rec?.firstIn || null, lastOut: rec?.lastOut || null,
-        hours: rec ? Math.round(rec.hours * 100) / 100 : 0,
-        late: isLateLevel(lateLevel), lateLevel, sites: rec?.sites || [],
-      };
+/* ==================== PAYROLL MONTH LOCK ==================== */
+
+// GET /api/attendance/admin/locks — every locked month, newest first.
+router.get('/admin/locks', requireRole(ADMIN), async (req, res) => {
+  try {
+    const rows = await prisma.attendanceLock.findMany({
+      orderBy: { month: 'desc' }, select: { month: true, lockedAt: true, lockedById: true },
     });
-    const leaveSoFar = days.filter(d => d.status === 'leave' && d.date <= todayStr).length;
-    const stats = {
-      // present + late + leave + absent === workingDaysSoFar + the days punched on
-      // a week-off or holiday. Those days are genuinely present but are not working
-      // days, so they lift the left side above workingDaysSoFar rather than fitting
-      // inside it (long true of a worked Sunday; now also of a worked holiday).
-      present: days.filter(d => d.status === 'present' && !d.late).length,
-      leave: leaveSoFar,
-      absent: days.filter(d => d.status === 'absent').length,
-      late: days.filter(d => d.late).length,
-      holiday: days.filter(d => d.status === 'holiday').length,
-      hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
-      otHours: otByUser.get(userId) || 0,
-    };
-    res.json({
-      month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,
-      // Required = hours the employee was expected to physically work (leave excluded).
-      requiredHours: Math.max(workingDaysSoFar - leaveSoFar, 0) * HOURS_PER_DAY,
-      grossRequiredHours: workingDaysSoFar * HOURS_PER_DAY,
-      stats, days,
-    });
+    const ids = [...new Set(rows.map((r) => r.lockedById).filter(Boolean))];
+    const users = ids.length
+      ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, fullName: true, username: true } })
+      : [];
+    const name = new Map(users.map((u) => [u.id, u.fullName || u.username]));
+    res.json({ locks: rows.map((r) => ({ month: r.month, lockedAt: r.lockedAt, lockedBy: name.get(r.lockedById) || null })) });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
+});
+
+// POST /api/attendance/admin/locks { month } — close a finished month for payroll.
+// Only months that are fully over can be locked: the current month still has
+// punches to come.
+router.post('/admin/locks', requireRole(ADMIN), async (req, res) => {
+  try {
+    const month = String(req.body?.month || '');
+    if (!MONTH.test(month)) return res.status(400).json({ message: 'month (YYYY-MM) is required' });
+    if (month >= currentMonthIST())
+      return res.status(400).json({ message: 'Only a month that has fully ended can be locked' });
+    if (await prisma.attendanceLock.findUnique({ where: { month } }))
+      return res.status(409).json({ message: `${monthLabel(month)} is already locked` });
+    const snapshot = await computeMonthSummary(month);
+    const row = await prisma.attendanceLock.create({ data: { month, lockedById: req.user.sub, snapshot } });
+    res.status(201).json({ month: row.month, lockedAt: row.lockedAt });
+  } catch (e) {
+    if (e.code === 'P2002') return res.status(409).json({ message: 'This month is already locked' });
+    console.error(e); res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE /api/attendance/admin/locks/:month — reopen a month (the snapshot is
+// discarded; numbers are computed live again until it is re-locked).
+router.delete('/admin/locks/:month', requireRole(ADMIN), async (req, res) => {
+  try {
+    const month = String(req.params.month || '');
+    if (!MONTH.test(month)) return res.status(400).json({ message: 'month must be YYYY-MM' });
+    // Finalized payslips were computed from this snapshot — reopening the month
+    // underneath them would let attendance and pay disagree.
+    const run = await prisma.payrollRun.findUnique({ where: { month }, select: { status: true } });
+    if (run?.status === 'finalized')
+      return res.status(409).json({ message: `Payroll for ${monthLabel(month)} is finalized. Reopen the payroll before unlocking attendance.` });
+    const { count } = await prisma.attendanceLock.deleteMany({ where: { month } });
+    if (!count) return res.status(404).json({ message: `${monthLabel(month)} is not locked` });
+    res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -501,16 +743,7 @@ router.get('/admin/month', requireRole(ADMIN), async (req, res) => {
 // Full session records (photos, addresses, sites) for the selected date
 router.get('/admin/day-sessions', requireRole(ADMIN), async (req, res) => {
   try {
-    const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : ymdIST(new Date());
-    const { start, end } = dayWindowIST(dateStr);
-    const where = { punchInTime: { gte: start, lt: end } };
-    if (req.query.userId) where.userId = Number(req.query.userId);
-    const sessions = await prisma.attendanceSession.findMany({
-      where,
-      orderBy: { punchInTime: 'asc' },
-      include: { user: { select: { id: true, username: true, fullName: true } } },
-    });
-    res.json({ date: dateStr, sessions });
+    res.json(await daySessions(dateParam(req.query.date), req.query.userId ? Number(req.query.userId) : null));
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -520,84 +753,10 @@ router.get('/admin/day-sessions', requireRole(ADMIN), async (req, res) => {
 router.get('/my-month', async (req, res) => {
   try {
     const month = req.query.month;
-    if (!/^\d{4}-\d{2}$/.test(month || ''))
+    if (!MONTH.test(month || ''))
       return res.status(400).json({ message: 'month=YYYY-MM required' });
-    const [y, m] = month.split('-').map(Number);
-    const daysInMonth = new Date(y, m, 0).getDate();
-    const start = new Date(`${month}-01T00:00:00+05:30`);
-    const end = new Date(start.getTime() + daysInMonth * 24 * 3600 * 1000);
-    const todayStr = ymdIST(new Date());
-
-    const sessions = await prisma.attendanceSession.findMany({
-      where: { userId: req.user.sub, punchInTime: { gte: start, lt: end } },
-      orderBy: { punchInTime: 'asc' },
-    });
-
-    const byDay = {};
-    for (const s of sessions) {
-      const ymd = ymdIST(s.punchInTime);
-      const d = byDay[ymd] || (byDay[ymd] = { sessions: 0, firstIn: s.punchInTime, lastOut: null, hours: 0, sites: [] });
-      d.sessions++;
-      if (s.punchOutTime) { d.lastOut = s.punchOutTime; d.hours += s.workingHours || 0; }
-      const site = (s.siteName || 'SESS').trim();
-      if (!d.sites.includes(site)) d.sites.push(site);
-    }
-
-    let workingDaysSoFar = 0;
-    const leaveSet = (await approvedLeaveSets(month, [req.user.sub])).get(req.user.sub) || new Set();
-    const holidays = await holidayMap(`${month}-01`, `${month}-${String(daysInMonth).padStart(2, '0')}`);
-    const days = [];
-    for (let d = 1; d <= daysInMonth; d++) {
-      const ymd = `${month}-${String(d).padStart(2, '0')}`;
-      // Zone-immune weekday (see /admin/month): a '+05:30' parse read through
-      // getDay() would follow the server's timezone, not the IST calendar.
-      const wd = new Date(ymd + 'T00:00:00.000Z').getUTCDay();
-      const isWeekoff = wd === 0; // Sunday is the weekly off
-      const isFuture = ymd > todayStr;
-      // Kept even when a higher-precedence status wins (a worked holiday, or one
-      // landing on a Sunday) so the UI can still label the day.
-      const holidayName = holidays.get(ymd) || null;
-      // A company holiday is a paid non-working day, like a Sunday — excluding it
-      // is what corrects requiredHours. A holiday on a Sunday is already excluded
-      // by isWeekoff, so it is never subtracted twice.
-      if (!isWeekoff && !isFuture && !holidayName) workingDaysSoFar++;
-      const rec = byDay[ymd];
-      const isLeave = leaveSet.has(ymd);
-      // Precedence: a real punch wins (working a holiday is legitimate — that is
-      // what comp-off is for); Sunday is the week-off; a company holiday beats
-      // approved leave, matching leaves.js countLeaveDays(), which does not
-      // charge a leave day for it; then leave, future, absent.
-      const status = rec ? 'present'
-        : isWeekoff ? 'weekoff'
-        : holidayName ? 'holiday'
-        : isLeave ? 'leave'
-        : isFuture ? 'future'
-        : 'absent';
-      const lateLevel = rec ? lateLevelOf(rec.firstIn) : null;
-      days.push({
-        date: ymd, weekday: wd, status, holidayName,
-        sessions: rec?.sessions || 0,
-        firstIn: rec?.firstIn || null, lastOut: rec?.lastOut || null,
-        hours: rec ? Math.round(rec.hours * 100) / 100 : 0,
-        late: isLateLevel(lateLevel), lateLevel, sites: rec?.sites || [],
-      });
-    }
-    const leaveSoFar = days.filter(d => d.status === 'leave' && d.date <= todayStr).length;
-    const stats = {
-      present: days.filter(d => d.status === 'present' && !d.late).length, // late days excluded
-      late: days.filter(d => d.late).length,
-      leave: leaveSoFar,
-      absent: days.filter(d => d.status === 'absent').length,
-      weekoff: days.filter(d => d.status === 'weekoff').length,
-      holiday: days.filter(d => d.status === 'holiday').length,
-      hours: Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100,
-    };
-    res.json({
-      month, workingDaysSoFar, hoursPerDay: HOURS_PER_DAY,
-      requiredHours: Math.max(workingDaysSoFar - leaveSoFar, 0) * HOURS_PER_DAY,
-      grossRequiredHours: workingDaysSoFar * HOURS_PER_DAY,
-      stats, days,
-    });
+    const lock = await lockInfo(month);
+    res.json({ ...(await computeUserMonth(month, req.user.sub)), locked: lock.locked });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -611,7 +770,7 @@ router.get('/my-day', async (req, res) => {
         where: { userId: req.user.sub, punchInTime: { gte: start, lt: end } },
         orderBy: { punchInTime: 'asc' },
       }),
-      holidayMap(dateStr),
+      branchOfUser(req.user.sub).then((b) => holidayMap(dateStr, dateStr, b)),
     ]);
     // No day status here (this is a raw session list), but the day card needs to
     // label a company holiday — same shape as /admin/day.
@@ -649,14 +808,16 @@ router.post('/admin/session', requireRole(ADMIN), async (req, res) => {
 
     const user = await prisma.user.findUnique({ where: { id: Number(userId) } });
     if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!(await assertUnlocked(res, ymdIST(pin), pout ? ymdIST(pout) : ymdIST(pin)))) return;
 
+    const shift = await shiftForUser(user.id);
     const session = await prisma.attendanceSession.create({
       data: {
         userId: Number(userId),
         punchInTime: pin,
         punchOutTime: pout,
         workingHours,
-        isLate: isLateLevel(lateLevelOf(pin)),
+        isLate: isLateLevel(lateLevelOf(pin, shift)),
         siteName: cleanSiteName(siteName),
         punchInAddress: cleanAddress(punchInAddress),
         punchOutAddress: cleanAddress(punchOutAddress),
@@ -675,12 +836,16 @@ router.patch('/admin/session/:id', requireRole(ADMIN), async (req, res) => {
 
     const { punchInTime, punchOutTime, siteName, punchInAddress, punchOutAddress } = req.body || {};
     const data = {};
+    // Both the day the session is on now and any day it is being moved to must
+    // be open.
+    if (!(await assertUnlocked(res, ymdIST(existing.punchInTime)))) return;
 
     if (punchInTime !== undefined) {
       const pin = new Date(punchInTime);
       if (isNaN(pin)) return res.status(400).json({ message: 'Invalid punch-in time' });
+      if (!(await assertUnlocked(res, ymdIST(pin)))) return;
       data.punchInTime = pin;
-      data.isLate = isLateLevel(lateLevelOf(pin));
+      data.isLate = isLateLevel(lateLevelOf(pin, await shiftForUser(existing.userId)));
     }
     if (siteName !== undefined) data.siteName = cleanSiteName(siteName);
     if (punchInAddress !== undefined) data.punchInAddress = cleanAddress(punchInAddress);
@@ -718,7 +883,10 @@ router.patch('/admin/session/:id', requireRole(ADMIN), async (req, res) => {
 // DELETE /api/attendance/admin/session/:id — remove a wrong session
 router.delete('/admin/session/:id', requireRole(ADMIN), async (req, res) => {
   try {
-    await prisma.attendanceSession.delete({ where: { id: Number(req.params.id) } });
+    const existing = await prisma.attendanceSession.findUnique({ where: { id: Number(req.params.id) } });
+    if (!existing) return res.status(404).json({ message: 'Session not found' });
+    if (!(await assertUnlocked(res, ymdIST(existing.punchInTime)))) return;
+    await prisma.attendanceSession.delete({ where: { id: existing.id } });
     res.json({ ok: true });
   } catch (e) {
     if (e.code === 'P2025') return res.status(404).json({ message: 'Session not found' });
@@ -756,6 +924,7 @@ router.post('/corrections', async (req, res) => {
       return res.status(400).json({ message: 'Provide the correct punch-in and/or punch-out time' });
     if (inT && outT && outT <= inT)
       return res.status(400).json({ message: 'Punch-out must be after punch-in' });
+    if (!(await assertUnlocked(res, date))) return;
 
     const dup = await prisma.attendanceCorrection.findFirst({
       where: { userId: req.user.sub, date: dateOnlyUTC(date), status: 'pending' },
@@ -771,6 +940,7 @@ router.post('/corrections', async (req, res) => {
         reason: reasonTrim.slice(0, 500),
       },
     });
+    requestCreated('correction', created);
     res.status(201).json(created);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -784,7 +954,7 @@ router.get('/corrections/my', async (req, res) => {
       take: 50,
       include: { reviewedBy: { select: { fullName: true, username: true } } },
     });
-    res.json({ requests });
+    res.json({ requests: await withManagerStage('correction', requests) });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -828,7 +998,7 @@ router.get('/admin/corrections', requireRole(ADMIN), async (req, res) => {
         reviewedBy: { select: { fullName: true, username: true } },
       },
     });
-    res.json({ requests });
+    res.json({ requests: await withManagerStage('correction', requests) });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -847,8 +1017,11 @@ router.patch('/admin/corrections/:id', requireRole(ADMIN), async (req, res) => {
     if (row.status !== 'pending')
       return res.status(400).json({ message: `Request is already ${row.status}` });
 
+    // Rejecting changes nothing on the books, so only approval needs the month open.
     if (status === 'approved') {
       const ymd = new Date(row.date).toISOString().slice(0, 10);
+      if (!(await assertUnlocked(res, ymd))) return;
+      const shift = await shiftForUser(row.userId);
       const { start, end } = dayWindowIST(ymd);
       const sessions = await prisma.attendanceSession.findMany({
         where: { userId: row.userId, punchInTime: { gte: start, lt: end } },
@@ -865,7 +1038,7 @@ router.patch('/admin/corrections/:id', requireRole(ADMIN), async (req, res) => {
             punchInTime: row.requestedIn,
             punchOutTime: row.requestedOut,
             workingHours: hours != null ? Math.round(hours * 100) / 100 : null,
-            isLate: isLateLevel(lateLevelOf(row.requestedIn)),
+            isLate: isLateLevel(lateLevelOf(row.requestedIn, shift)),
             siteName: 'SESS',
             punchInAddress: 'Added via attendance correction',
           },
@@ -882,7 +1055,7 @@ router.patch('/admin/corrections/:id', requireRole(ADMIN), async (req, res) => {
             where: { id: first.id },
             data: {
               punchInTime: row.requestedIn,
-              isLate: isLateLevel(lateLevelOf(row.requestedIn)),
+              isLate: isLateLevel(lateLevelOf(row.requestedIn, shift)),
               workingHours: out ? Math.round(((out - row.requestedIn) / 3600000) * 100) / 100 : first.workingHours,
             },
           });
@@ -912,6 +1085,7 @@ router.patch('/admin/corrections/:id', requireRole(ADMIN), async (req, res) => {
       },
       include: { user: { select: { id: true, username: true, fullName: true } } },
     });
+    finalDecided('correction', updated, updated.status);
     res.json(updated);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });

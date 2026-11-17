@@ -21,9 +21,29 @@ const STANDARD_ROLES = [
 // Every route below: must be logged in AND must be admin
 router.use(requireAuth, requireRole(ADMIN));
 
+// Only the Admin role may create, edit or (de)activate Admin accounts, or hand
+// out the Admin role — someone with just the 'users' permission must not be
+// able to make themselves (or anyone) an Admin.
+const callerIsAdmin = (req) => (req.user?.roles || []).includes(ADMIN);
+async function adminGuard(req, targetId, roleName) {
+  if (callerIsAdmin(req)) return null;
+  if (roleName === ADMIN) return 'Only an Admin can give someone the Admin role';
+  if (targetId) {
+    const t = await prisma.user.findUnique({ where: { id: targetId }, select: { role: { select: { name: true } } } });
+    if (t?.role?.name === ADMIN) return 'Only an Admin can change an Admin account';
+  }
+  return null;
+}
+
+// Roles that may be assigned: the standard list plus any created in Roles & Permissions.
+async function assignableRoles() {
+  const custom = (await prisma.role.findMany({ select: { name: true } })).map((r) => r.name);
+  return [...new Set([...STANDARD_ROLES, ...custom])];
+}
+
 // GET /api/users/roles - role options for the create form
-router.get('/roles', (req, res) => {
-  res.json(STANDARD_ROLES);
+router.get('/roles', async (req, res) => {
+  try { res.json(await assignableRoles()); } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
 // GET /api/users - list all users with roles
@@ -67,6 +87,7 @@ const USER_SELECT = {
   esiNumber: true, epfNumber: true, panNumber: true, salaryCtc: true,
   bankName: true, bankAccount: true, bankIfsc: true,
   exitDate: true, exitReason: true, noticeServed: true, exitFormalitiesDone: true,
+  shiftId: true, shift: { select: { id: true, name: true } },
   role: { select: { name: true } },
 };
 
@@ -109,6 +130,16 @@ async function buildProfileData(body, id) {
       const mgr = await prisma.user.findUnique({ where: { id: mid } });
       if (!mgr) return fail('Reporting manager not found');
       data.reportingManagerId = mid;
+    }
+  }
+  if (body.shiftId !== undefined) {
+    const raw = body.shiftId;
+    if (raw === null || raw === '') data.shiftId = null; // follow the default shift
+    else {
+      const sid = Number(raw);
+      if (!Number.isInteger(sid) || !(await prisma.shift.findUnique({ where: { id: sid } })))
+        return fail('Shift not found');
+      data.shiftId = sid;
     }
   }
   if (body.bloodGroup !== undefined) data.bloodGroup = strOrNull(body.bloodGroup, 10);
@@ -182,8 +213,10 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'username, password and roleName are required' });
     if (password.length < 6)
       return res.status(400).json({ message: 'Password must be at least 6 characters' });
-    if (!STANDARD_ROLES.includes(roleName))
+    if (!(await assignableRoles()).includes(roleName))
       return res.status(400).json({ message: 'Invalid role' });
+    const denied = await adminGuard(req, null, roleName);
+    if (denied) return res.status(403).json({ message: denied });
 
     const ph = normPhone(phone);
     if (!ph.ok) return res.status(400).json({ message: ph.message });
@@ -249,6 +282,8 @@ router.patch('/:id', async (req, res) => {
 
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ message: 'User not found' });
+    const denied = await adminGuard(req, id, roleName);
+    if (denied) return res.status(403).json({ message: denied });
 
     const data = {};
 
@@ -289,7 +324,7 @@ router.patch('/:id', async (req, res) => {
     Object.assign(data, prof.data);
 
     if (roleName !== undefined) {
-      if (!STANDARD_ROLES.includes(roleName))
+      if (!(await assignableRoles()).includes(roleName))
         return res.status(400).json({ message: 'Invalid role' });
       const role = await prisma.role.upsert({ where: { name: roleName }, update: {}, create: { name: roleName } });
       // Goes into the same update as the other fields, so a role change can no longer half-apply
@@ -322,6 +357,8 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ message: 'isActive (true/false) required' });
     if (id === req.user.sub)
       return res.status(400).json({ message: 'You cannot deactivate your own account' });
+    const denied = await adminGuard(req, id);
+    if (denied) return res.status(403).json({ message: denied });
 
     const user = await prisma.user.update({
       where: { id },
@@ -337,3 +374,6 @@ router.patch('/:id/status', async (req, res) => {
 });
 
 module.exports = router;
+
+// Exposed for recruitment (hiring a candidate creates an employee).
+module.exports.nextEmployeeId = nextEmployeeId;

@@ -21,22 +21,34 @@ const MY_TILES = [
   { key: 'overtime', label: 'My Overtime', icon: 'more-time', screen: 'Overtime' },
   { key: 'compoff', label: 'Comp-Off', icon: 'redeem', screen: 'CompOff' },
   { key: 'expense', label: 'My Expenses', icon: 'receipt-long', screen: 'Expense' },
+  { key: 'payslips', label: 'My Payslips', icon: 'payments', screen: 'Payslips' },
+  { key: 'announcements', label: 'Announcements', icon: 'campaign', screen: 'Announcements' },
+  { key: 'helpdesk', label: 'HR Helpdesk', icon: 'support-agent', screen: 'Helpdesk' },
+  { key: 'mydocs', label: 'My Documents', icon: 'folder-shared', screen: 'MyDocuments' },
+  { key: 'training', label: 'My Training', icon: 'school', screen: 'Training' },
   { key: 'holidays', label: 'Holiday List', icon: 'celebration', screen: 'Holidays' },
   { key: 'tasks', label: 'My Tasks', icon: 'checklist', screen: 'TaskList' },
   { key: 'notes', label: 'Notes', icon: 'sticky-note-2', screen: 'Notes' },
 ];
 
+// Shown to anyone with employees reporting to them (reporting manager).
+const MANAGER_TILES = [
+  { key: 'myteam', label: 'My Team', icon: 'groups', screen: 'TeamAttendance', params: { scope: 'team' } },
+  { key: 'teamappr', label: 'Team Approvals', icon: 'approval', screen: 'TeamApprovals' },
+];
+
+// `perm` = the admin area the role needs (Roles & Permissions on the web).
 const ADMIN_TILES = [
-  { key: 'users', label: 'User Management', icon: 'group', screen: 'Users' },
-  { key: 'teamatt', label: 'Team Attendance', icon: 'groups', screen: 'TeamAttendance' },
-  { key: 'trail', label: 'Team Trail', icon: 'map', screen: 'TeamTrail' },
-  { key: 'leaveappr', label: 'Leave Approvals', icon: 'fact-check', screen: 'LeaveApprovals' },
-  { key: 'otappr', label: 'OT Approvals', icon: 'more-time', screen: 'OtApprovals' },
-  { key: 'coappr', label: 'Comp-Off Approvals', icon: 'redeem', screen: 'CompOffApprovals' },
-  { key: 'expappr', label: 'Expense Approvals', icon: 'receipt-long', screen: 'ExpenseApprovals' },
-  { key: 'leavepolicy', label: 'Leave Policy', icon: 'rule', screen: 'LeavePolicy' },
-  { key: 'sites', label: 'Customer Sites', icon: 'place', screen: 'Sites' },
-  { key: 'sendnote', label: 'Send Note', icon: 'campaign', screen: 'SendNote' },
+  { key: 'users', label: 'User Management', icon: 'group', screen: 'Users', perm: 'users' },
+  { key: 'teamatt', label: 'Team Attendance', icon: 'groups', screen: 'TeamAttendance', perm: 'attendance' },
+  { key: 'trail', label: 'Team Trail', icon: 'map', screen: 'TeamTrail', perm: 'location' },
+  { key: 'leaveappr', label: 'Leave Approvals', icon: 'fact-check', screen: 'LeaveApprovals', perm: 'leave' },
+  { key: 'otappr', label: 'OT Approvals', icon: 'more-time', screen: 'OtApprovals', perm: 'overtime' },
+  { key: 'coappr', label: 'Comp-Off Approvals', icon: 'redeem', screen: 'CompOffApprovals', perm: 'compoff' },
+  { key: 'expappr', label: 'Expense Approvals', icon: 'receipt-long', screen: 'ExpenseApprovals', perm: 'expenses' },
+  { key: 'leavepolicy', label: 'Leave Policy', icon: 'rule', screen: 'LeavePolicy', perm: 'leave' },
+  { key: 'sites', label: 'Customer Sites', icon: 'place', screen: 'Sites', perm: 'sites' },
+  { key: 'sendnote', label: 'Send Note', icon: 'campaign', screen: 'SendNote', perm: 'announcements' },
 ];
 
 export default function ProfileMenuScreen({ navigation }) {
@@ -44,32 +56,53 @@ export default function ProfileMenuScreen({ navigation }) {
   const [unread, setUnread] = useState(0);
   const [noteUnread, setNoteUnread] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [team, setTeam] = useState(null); // { isManager, teamSize, pendingApprovals }
+  const [annPending, setAnnPending] = useState(0); // notices awaiting my acknowledgement
+  const [perms, setPerms] = useState([]); // admin areas my role may manage (live from /me)
+  const [trainPending, setTrainPending] = useState(0);
+  const [interviews, setInterviews] = useState(0); // interviews I'm scheduled to take
 
   useEffect(() => {
     let alive = true;
     api('/me/profile').then(p => { if (alive) setMe(p); }).catch(() => {});
     // Roles live in the saved login payload — /me/profile does not return them.
     getAuth().then(a => { if (alive) setIsAdmin((a?.roles || []).includes(ADMIN)); }).catch(() => {});
+    // Live role + permissions: a role change takes effect without logging out.
+    api('/me').then(m => {
+      if (!alive) return;
+      setIsAdmin((m.roles || []).includes(ADMIN));
+      setPerms(m.permissions || []);
+    }).catch(() => {});
     return () => { alive = false; };
   }, []);
 
   // Unread counters — refreshed each time the screen is focused.
   useEffect(() => {
     const fetchCounts = () => {
-      api('/chat/unread-count').then(r => setUnread(r.count || 0)).catch(() => {});
+      Promise.all([
+        api('/chat/unread-count').then(r => r.count || 0).catch(() => 0),
+        api('/notifications/unread-count').then(r => r.count || 0).catch(() => 0),
+      ]).then(([chat, updates]) => setUnread(chat + updates));
       api('/notes/unread-count').then(r => setNoteUnread(r.count || 0)).catch(() => {});
+      // Live, not from the login payload: someone can become a manager mid-session.
+      api('/team/summary').then(setTeam).catch(() => {});
+      api('/announcements/pending-count').then(r => setAnnPending(r.count || 0)).catch(() => {});
+      api('/training/my').then(r => setTrainPending(r.pending || 0)).catch(() => {});
+      api('/recruitment/interviews/my').then(r => setInterviews((r.interviews || []).length)).catch(() => {});
     };
     fetchCounts();
     return navigation.addListener('focus', fetchCounts);
   }, [navigation]);
 
+  const adminTiles = ADMIN_TILES.filter(t => isAdmin || perms.includes(t.perm));
+
   const Tile = ({ t }) => {
-    const badge = t.key === 'notes' ? noteUnread : 0;
+    const badge = t.key === 'notes' ? noteUnread : t.key === 'teamappr' ? (team?.pendingApprovals || 0) : t.key === 'announcements' ? annPending : t.key === 'training' ? trainPending : t.key === 'interviews' ? interviews : 0;
     return (
       <TouchableOpacity
         style={styles.tile}
         activeOpacity={0.75}
-        onPress={() => navigation.navigate(t.screen)}
+        onPress={() => navigation.navigate(t.screen, t.params)}
       >
         <View style={styles.tileIcon}>
           <MaterialIcons name={t.icon} size={26} color={COLORS.primary} />
@@ -124,11 +157,29 @@ export default function ProfileMenuScreen({ navigation }) {
           {MY_TILES.map(t => <Tile key={t.key} t={t} />)}
         </View>
 
-        {isAdmin && (
+        {team?.isManager && (
           <>
-            <SectionLabel text="ADMIN · MANAGEMENT" />
+            <SectionLabel text={`MY TEAM · ${team.teamSize} ${team.teamSize === 1 ? 'MEMBER' : 'MEMBERS'}`} />
             <View style={styles.grid}>
-              {ADMIN_TILES.map(t => <Tile key={t.key} t={t} />)}
+              {MANAGER_TILES.map(t => <Tile key={t.key} t={t} />)}
+            </View>
+          </>
+        )}
+
+        {interviews > 0 && (
+          <>
+            <SectionLabel text="HIRING" />
+            <View style={styles.grid}>
+              <Tile t={{ key: 'interviews', label: 'My Interviews', icon: 'record-voice-over', screen: 'Interviews' }} />
+            </View>
+          </>
+        )}
+
+        {adminTiles.length > 0 && (
+          <>
+            <SectionLabel text={isAdmin ? 'ADMIN · MANAGEMENT' : 'MANAGEMENT'} />
+            <View style={styles.grid}>
+              {adminTiles.map(t => <Tile key={t.key} t={t} />)}
             </View>
           </>
         )}

@@ -5,6 +5,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { GradientHeader, BottomNav, Card } from '../components/ui';
 import { COLORS } from '../lib/theme';
 import { getAuth, clearAuth } from '../lib/auth';
+import { unregisterPush } from '../lib/notifications';
 
 const APP_VERSION = '0.1';
 
@@ -23,6 +24,7 @@ export default function MoreSettingsScreen({ navigation }) {
       {
         text: 'Logout', style: 'destructive',
         onPress: async () => {
+          await unregisterPush(); // before clearAuth — needs the token to authenticate
           await clearAuth();
           navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
         },
@@ -45,6 +47,8 @@ export default function MoreSettingsScreen({ navigation }) {
 
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Card style={{ padding: 6 }}>
+          <Row icon="exit-to-app" label="Resignation" onPress={() => navigation.navigate('Resignation')} />
+          <View style={styles.divider} />
           <Row icon="description" label="Terms & Conditions" onPress={() => navigation.navigate('Terms')} />
           <View style={styles.divider} />
           <Row icon="privacy-tip" label="Privacy Policy" onPress={() => navigation.navigate('Privacy')} />

@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Calendar } from 'react-native-calendars';
 import { api } from '../lib/api';
-import { GradientHeader, BottomNav, Card, Chip, PrimaryButton , SheetOverlay} from '../components/ui';
+import { GradientHeader, BottomNav, Card, Chip, PrimaryButton, SheetOverlay, ManagerStage } from '../components/ui';
 import { COLORS, RADIUS } from '../lib/theme';
 
 const todayYMD = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
@@ -179,8 +179,9 @@ export default function OvertimeScreen({ navigation }) {
                     </Text>
                     {r.reason ? <Text style={styles.reqReason} numberOfLines={2}>{r.reason}</Text> : null}
                     {r.source === 'admin' && <Text style={styles.adminTag}>Added by admin</Text>}
+                    <ManagerStage stage={r.managerStage} />
                     {r.status === 'rejected' && r.reviewNote ? (
-                      <Text style={styles.reqNote}>Admin: {r.reviewNote}</Text>
+                      <Text style={styles.reqNote}>{r.managerStage?.state === 'rejected' ? 'Manager' : 'Admin'}: {r.reviewNote}</Text>
                     ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end', gap: 6 }}>

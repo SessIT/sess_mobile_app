@@ -2,6 +2,11 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { reclaimedLeaveDays } = require('../lib/leaveWorked');
+const { shiftForUser, isWeekOff } = require('../lib/shifts');
+const { assertUnlocked } = require('../lib/attendanceLock');
+const { holidayMapFor, branchOfUser } = require('../lib/holidays');
+const { withManagerStage } = require('../lib/approvals');
+const { requestCreated, finalDecided } = require('../lib/requestEvents');
 const router = express.Router();
 const ADMIN = 'Admin';
 
@@ -43,22 +48,20 @@ async function ensureTypes() {
   }
 }
 
-// Count leave days between two YMD dates (inclusive), skipping Sundays and
-// company holidays. A half-day request on a single working day counts as 0.5.
-async function countLeaveDays(startYmd, endYmd, halfDay) {
-  const holidayRows = await prisma.holiday.findMany({
-    where: { date: { gte: dateOnly(startYmd), lte: dateOnly(endYmd) } },
-    select: { date: true },
-  });
-  const holidays = new Set(holidayRows.map((h) => new Date(h.date).toISOString().slice(0, 10)));
+// Count leave days between two YMD dates (inclusive), skipping the employee's
+// shift week-offs and company holidays. A half-day request on a single working
+// day counts as 0.5.
+async function countLeaveDays(startYmd, endYmd, halfDay, shift, branchId = null) {
+  // Company-wide holidays plus the employee's branch holidays.
+  const holidays = await holidayMapFor(startYmd, endYmd, branchId);
   const dayMs = 86400000;
   const s = Date.parse(startYmd + 'T00:00:00Z');
   const e = Date.parse(endYmd + 'T00:00:00Z');
   let count = 0;
   for (let t = s; t <= e; t += dayMs) {
-    const dt = new Date(t);
-    if (dt.getUTCDay() === 0) continue; // Sunday = weekly off
-    if (holidays.has(dt.toISOString().slice(0, 10))) continue; // holiday
+    const ymd = new Date(t).toISOString().slice(0, 10);
+    if (isWeekOff(shift, ymd)) continue; // weekly off
+    if (holidays.has(ymd)) continue; // holiday
     count++;
   }
   if (halfDay && startYmd === endYmd && count === 1) return 0.5;
@@ -241,7 +244,7 @@ router.get('/my', async (req, res) => {
     res.json({
       year,
       balances,
-      requests: requests.map((r) => {
+      requests: (await withManagerStage('leave', requests)).map((r) => {
         const back = byRequest.get(r.id) || 0;
         return { ...r, reclaimedDays: back, chargedDays: Math.round((r.days - back) * 100) / 100 };
       }),
@@ -266,10 +269,12 @@ router.post('/requests', async (req, res) => {
     const type = await prisma.leaveType.findUnique({ where: { id: Number(leaveTypeId) } });
     if (!type) return res.status(404).json({ message: 'Leave type not found' });
 
+    if (!(await assertUnlocked(res, startDate, endDate))) return;
+
     const isHalf = !!halfDay && startDate === endDate;
-    const days = await countLeaveDays(startDate, endDate, isHalf);
+    const days = await countLeaveDays(startDate, endDate, isHalf, await shiftForUser(req.user.sub), await branchOfUser(req.user.sub));
     if (days <= 0)
-      return res.status(400).json({ message: 'Selected range has no working days (Sundays/holidays excluded)' });
+      return res.status(400).json({ message: 'Selected range has no working days (week-offs/holidays excluded)' });
 
     // Block overlapping pending/approved leave.
     const overlap = await prisma.leaveRequest.findFirst({
@@ -307,6 +312,7 @@ router.post('/requests', async (req, res) => {
       },
       include: { leaveType: { select: { code: true, name: true } } },
     });
+    requestCreated('leave', created);
     res.status(201).json(created);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
@@ -367,7 +373,7 @@ router.get('/requests', requireRole(ADMIN), async (req, res) => {
         reviewedBy: { select: { fullName: true, username: true } },
       },
     });
-    res.json({ year, requests, truncated: requests.length === LIST_MAX });
+    res.json({ year, requests: await withManagerStage('leave', requests), truncated: requests.length === LIST_MAX });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -385,7 +391,11 @@ router.patch('/requests/:id/decision', requireRole(ADMIN), async (req, res) => {
       return res.status(400).json({ message: `Request is already ${reqRow.status}` });
 
     // On approve, make sure it still fits the remaining (approved-only) balance.
+    // Approval turns absent days into paid leave, so a locked month must refuse
+    // it; rejecting leaves the books as they are.
     if (status === 'approved') {
+      const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+      if (!(await assertUnlocked(res, ymd(reqRow.startDate), ymd(reqRow.endDate)))) return;
       const year = Number(new Date(reqRow.startDate).toISOString().slice(0, 4));
       const bal = (await balancesFor(reqRow.userId, year)).find((b) => b.leaveTypeId === reqRow.leaveTypeId);
       const approvedRemaining = (bal?.quota ?? 0) - (bal?.used ?? 0);
@@ -406,8 +416,12 @@ router.patch('/requests/:id/decision', requireRole(ADMIN), async (req, res) => {
         user: { select: { id: true, username: true, fullName: true } },
       },
     });
+    finalDecided('leave', updated, updated.status);
     res.json(updated);
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error' }); }
 });
 
 module.exports = router;
+
+// Exposed for the leave register report.
+module.exports.balancesFor = balancesFor;

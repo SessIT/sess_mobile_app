@@ -70,8 +70,335 @@ model User {
   expenseRequests     ExpenseRequest[]       @relation("userExpenses")
   reviewedExpenses    ExpenseRequest[]       @relation("reviewedExpenses")
 
+  // ---- Work schedule ---- NULL = the default shift (see lib/shifts.js)
+  shiftId Int?   @map("shift_id")
+  shift   Shift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  salaryStructures SalaryStructure[]
+
+  // ---- Multi-branch & devices ----
+  branchId    Int?    @map("branch_id")
+  branch      Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  biometricId String? @unique @map("biometric_id") // employee code / PIN on the biometric device
+
   @@index([roleId])
+  @@index([shiftId])
+  @@index([branchId])
   @@map("users")
+}
+
+// Work schedule: lateness, early-out, half-day and week-offs are all judged
+// against the employee's shift. Exactly one row is the default, used by every
+// employee with no shift assigned. Times are IST "HH:MM"; an end at/before the
+// start is an overnight shift.
+model Shift {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique
+  startTime    String   @map("start_time")
+  endTime      String   @map("end_time")
+  graceMinutes Int      @default(10) @map("grace_minutes") // first punch-in up to start+grace is on time
+  hoursPerDay  Float    @default(8) @map("hours_per_day") // drives required hours
+  halfDayHours Float    @default(4) @map("half_day_hours") // a worked day under this is flagged half-day
+  weekOffDays  Int[]    @default([0]) @map("week_off_days") // 0=Sun … 6=Sat
+  isDefault    Boolean  @default(false) @map("is_default")
+  createdAt    DateTime @default(now()) @map("created_at")
+  users        User[]
+
+  @@map("shifts")
+}
+
+// ======================= PEOPLE OPS (Phase 5) =======================
+
+// Company-wide notice / policy. With requiresAck every employee must tap
+// "I have read this"; the admin sees who has and who hasn't.
+model Announcement {
+  id          Int                @id @default(autoincrement())
+  title       String
+  body        String
+  requiresAck Boolean            @default(false) @map("requires_ack")
+  pinned      Boolean            @default(false)
+  createdById Int?               @map("created_by_id")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  acks        AnnouncementAck[]
+
+  @@map("announcements")
+}
+
+model AnnouncementAck {
+  id             Int          @id @default(autoincrement())
+  announcementId Int          @map("announcement_id")
+  userId         Int          @map("user_id")
+  ackedAt        DateTime     @default(now()) @map("acked_at")
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@map("announcement_acks")
+}
+
+// HR helpdesk: an employee's question / request (payslip query, letter
+// request, …) with a reply thread. open → in_progress → resolved / closed.
+model Ticket {
+  id        Int             @id @default(autoincrement())
+  userId    Int             @map("user_id")
+  category  String
+  subject   String
+  status    String          @default("open")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  closedAt  DateTime?       @map("closed_at")
+  messages  TicketMessage[]
+
+  @@index([userId, status])
+  @@index([status, updatedAt])
+  @@map("tickets")
+}
+
+model TicketMessage {
+  id        Int      @id @default(autoincrement())
+  ticketId  Int      @map("ticket_id")
+  authorId  Int      @map("author_id")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("ticket_messages")
+}
+
+// Company asset register (laptops, phones, SIMs, tools…). assignedToId is the
+// current holder; every assign / return / status change is kept in AssetEvent.
+model Asset {
+  id           Int          @id @default(autoincrement())
+  tag          String       @unique // asset code, e.g. SESS-LT-004
+  name         String
+  category     String
+  serialNo     String?      @map("serial_no")
+  status       String       @default("available") // available | assigned | repair | retired
+  assignedToId Int?         @map("assigned_to_id")
+  assignedAt   DateTime?    @map("assigned_at")
+  notes        String?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  events       AssetEvent[]
+
+  @@index([assignedToId])
+  @@map("assets")
+}
+
+model AssetEvent {
+  id        Int      @id @default(autoincrement())
+  assetId   Int      @map("asset_id")
+  action    String // created | assigned | returned | repair | retired | available
+  userId    Int?     @map("user_id") // the employee concerned
+  byId      Int?     @map("by_id")
+  condition String?
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@map("asset_events")
+}
+
+// An employee's document (ID proof, certificates, signed letters…). Files live
+// OUTSIDE the public uploads folder and are only served through an
+// ownership-checked route — these are the most sensitive files in the system.
+model EmployeeDocument {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  category     String
+  title        String
+  filePath     String   @map("file_path")
+  mimeType     String   @map("mime_type")
+  uploadedById Int      @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("employee_documents")
+}
+
+// Resignation → exit. requested (employee) → accepted (admin sets the last
+// working day) → completed (checklist done; employee deactivated), or
+// withdrawn / rejected.
+model ExitCase {
+  id               Int       @id @default(autoincrement())
+  userId           Int       @map("user_id")
+  reason           String
+  requestedLastDay String    @map("requested_last_day") // YYYY-MM-DD
+  lastWorkingDay   String?   @map("last_working_day")
+  exitType         String    @default("Resigned") @map("exit_type") // Resigned | Termination | Abscond
+  status           String    @default("requested")
+  checklist        Json // [{ key, label, done }]
+  settlementAmount Float?    @map("settlement_amount")
+  settlementNote   String?   @map("settlement_note")
+  adminNote        String?   @map("admin_note")
+  decidedById      Int?      @map("decided_by_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  completedAt      DateTime? @map("completed_at")
+
+  @@index([userId])
+  @@index([status])
+  @@map("exit_cases")
+}
+
+// ======================= NOTIFICATIONS =======================
+
+// In-app notification inbox (one row per recipient). Every row is also sent as
+// a phone push to the recipient's registered devices (see lib/notify.js).
+model Notification {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  kind      String // leave | ot | compoff | expense | correction | payroll | system
+  title     String
+  body      String
+  data      Json? // { screen, params } — where tapping it should go
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// Expo push token of one installed app. A token follows the last account that
+// signed in on that phone, and is removed on logout or when Expo reports the
+// app uninstalled (DeviceNotRegistered).
+model PushToken {
+  id         Int      @id @default(autoincrement())
+  token      String   @unique
+  userId     Int      @map("user_id")
+  platform   String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  lastSeenAt DateTime @updatedAt @map("last_seen_at")
+
+  @@index([userId])
+  @@map("push_tokens")
+}
+
+// ======================= PAYROLL =======================
+
+// Monthly salary of one employee, effective from a month onwards. A new row
+// (e.g. an increment) supersedes older ones from its effectiveFrom month; the
+// history stays for arrears and audit. All amounts are the FULL-MONTH rate.
+model SalaryStructure {
+  id                 Int      @id @default(autoincrement())
+  userId             Int      @map("user_id")
+  effectiveFrom      String   @map("effective_from") // "YYYY-MM"
+  basic              Float
+  da                 Float    @default(0)
+  hra                Float    @default(0)
+  conveyance         Float    @default(0)
+  specialAllowance   Float    @default(0) @map("special_allowance")
+  otherAllowance     Float    @default(0) @map("other_allowance")
+  pfEnabled          Boolean  @default(true) @map("pf_enabled")
+  pfOnFullWage       Boolean  @default(false) @map("pf_on_full_wage") // false = capped at the PF wage ceiling
+  esiEnabled         Boolean  @default(true) @map("esi_enabled")
+  ptEnabled          Boolean  @default(true) @map("pt_enabled")
+  tdsEnabled         Boolean  @default(true) @map("tds_enabled")
+  tdsMonthlyOverride Float?   @map("tds_monthly_override") // fixed TDS instead of the projection (old regime, declarations)
+  note               String?
+  createdAt          DateTime @default(now()) @map("created_at")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, effectiveFrom])
+  @@map("salary_structures")
+}
+
+// One payroll per month: draft (editable, regenerable) → finalized (payslips
+// published to employees, figures frozen). Needs the attendance month locked.
+model PayrollRun {
+  id            Int       @id @default(autoincrement())
+  month         String    @unique // "YYYY-MM"
+  status        String    @default("draft") // draft | finalized
+  settings      Json // the statutory settings this run was computed with
+  createdById   Int?      @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  finalizedById Int?      @map("finalized_by_id")
+  finalizedAt   DateTime? @map("finalized_at")
+  payslips      Payslip[]
+
+  @@map("payroll_runs")
+}
+
+// One employee's pay for a run. Every figure is stored, and `employee` keeps
+// the name/bank/PAN/UAN as they were — so a payslip never changes after the
+// fact, even if the profile or salary structure is edited later.
+model Payslip {
+  id              Int        @id @default(autoincrement())
+  runId           Int        @map("run_id")
+  userId          Int        @map("user_id")
+  month           String
+  daysInMonth     Int        @map("days_in_month")
+  payableDays     Float      @map("payable_days") // employed days in the month
+  lopDays         Float      @map("lop_days")
+  paidDays        Float      @map("paid_days")
+  otHours         Float      @default(0) @map("ot_hours")
+  gross           Float
+  totalDeductions Float      @map("total_deductions")
+  netPay          Float      @map("net_pay")
+  pfWage          Float      @default(0) @map("pf_wage")
+  pfEmployee      Float      @default(0) @map("pf_employee")
+  epfEmployer     Float      @default(0) @map("epf_employer") // employer share to EPF (A/c 1)
+  epsEmployer     Float      @default(0) @map("eps_employer") // employer share to EPS (A/c 10)
+  esiWage         Float      @default(0) @map("esi_wage")
+  esiEmployee     Float      @default(0) @map("esi_employee")
+  esiEmployer     Float      @default(0) @map("esi_employer")
+  pt              Float      @default(0)
+  tds             Float      @default(0)
+  earnings        Json // [{ code, label, amount }]
+  deductions      Json // [{ code, label, amount }]
+  adjustments     Json // admin inputs: arrears, bonus, otherEarning, otherDeduction, lopOverride, tdsOverride, note
+  employee        Json // snapshot: name, employeeId, designation, department, pan, uan, esiNumber, bank, ifsc, joining date
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  run             PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, userId])
+  @@index([userId, month])
+  @@map("payslips")
+}
+
+// Small key → JSON settings store (key "payroll" holds the statutory config).
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
+}
+
+// First-level (reporting-manager) decision on an employee request. One table
+// for all five request kinds — leave | ot | compoff | expense | correction —
+// keyed by (kind, requestId). A manager approval leaves the request pending
+// for the admin's final decision; a manager rejection also closes the request
+// itself. `stage` leaves room for longer approval chains later.
+model RequestApproval {
+  id        Int      @id @default(autoincrement())
+  kind      String
+  requestId Int      @map("request_id")
+  stage     String   @default("manager")
+  decision  String // approved | rejected
+  actorId   Int      @map("actor_id")
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([kind, requestId, stage])
+  @@index([actorId])
+  @@map("request_approvals")
+}
+
+// A locked month is closed for payroll: the per-employee summary is frozen in
+// `snapshot` and every change that would alter that month's attendance (session
+// edits, corrections, leave / OT / comp-off approvals) is refused until unlocked.
+model AttendanceLock {
+  id         Int      @id @default(autoincrement())
+  month      String   @unique // "YYYY-MM"
+  lockedById Int?     @map("locked_by_id")
+  lockedAt   DateTime @default(now()) @map("locked_at")
+  snapshot   Json?
+
+  @@map("attendance_locks")
 }
 
 // Compensation leave (comp-off) — an employee who worked on a week-off (Sunday)
@@ -219,9 +546,12 @@ model AttendanceCorrection {
 }
 
 model Role {
-  id    Int    @id @default(autoincrement())
-  name  String @unique
-  users User[]
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  // Admin-console areas this role may manage (keys in lib/permissions.js).
+  // The Admin role always has everything regardless of this list.
+  permissions String[] @default([])
+  users       User[]
 
   @@map("roles")
 }
@@ -245,6 +575,7 @@ model AttendanceSession {
   punchInAddress  String?   @map("punch_in_address")
   punchOutAddress String?   @map("punch_out_address")
   siteName        String?   @default("SESS") @map("site_name")
+  source          String    @default("mobile") // mobile | biometric | admin | correction
 
   @@index([userId, punchInTime])
   @@map("attendance_session")
@@ -321,11 +652,194 @@ model LeaveRequest {
 
 model Holiday {
   id        Int      @id @default(autoincrement())
-  date      DateTime @unique @db.Date
+  date      DateTime @db.Date
   name      String
+  // NULL = company-wide; set = only for that branch (e.g. a state holiday).
+  branchId  Int?     @map("branch_id")
   createdAt DateTime @default(now()) @map("created_at")
 
+  @@unique([date, branchId])
+  @@index([date])
   @@map("holidays")
+}
+
+// ======================= ENTERPRISE (Phase 6) =======================
+
+// An office / plant / location. Employees belong to one; holidays can be
+// branch-specific; biometric devices sit in one.
+model Branch {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  code      String?  @unique
+  address   String?
+  state     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  users     User[]
+
+  @@map("branches")
+}
+
+// Every create / change / delete made through the API: who, what, when.
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  userName  String?  @map("user_name")
+  method    String
+  path      String
+  entity    String?
+  entityId  String?  @map("entity_id")
+  status    Int
+  ip        String?
+  summary   Json? // redacted request body
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([entity, createdAt])
+  @@map("audit_logs")
+}
+
+// Biometric attendance device (ZKTeco / eSSL ADMS push). Only registered
+// serial numbers are accepted on the /iclock endpoints.
+model BiometricDevice {
+  id         Int       @id @default(autoincrement())
+  serialNo   String    @unique @map("serial_no")
+  name       String
+  branchId   Int?      @map("branch_id")
+  siteName   String?   @map("site_name") // written on punches from this device
+  isActive   Boolean   @default(true) @map("is_active")
+  lastSeenAt DateTime? @map("last_seen_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@map("biometric_devices")
+}
+
+// Raw punch from a device or an imported file, kept for audit. A punch is
+// stored once (device + PIN + time) and turned into an attendance session.
+model BiometricLog {
+  id        Int      @id @default(autoincrement())
+  deviceSn  String   @map("device_sn")
+  pin       String
+  punchTime DateTime @map("punch_time")
+  userId    Int?     @map("user_id")
+  status    String // processed | unmatched | duplicate | skipped
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([deviceSn, pin, punchTime])
+  @@index([createdAt])
+  @@map("biometric_logs")
+}
+
+// ---- Recruitment (ATS) ----
+model JobOpening {
+  id          Int         @id @default(autoincrement())
+  title       String
+  department  String?
+  branchId    Int?        @map("branch_id")
+  openings    Int         @default(1)
+  status      String      @default("open") // open | on_hold | closed
+  description String?
+  createdById Int?        @map("created_by_id")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+  candidates  Candidate[]
+
+  @@map("job_openings")
+}
+
+model Candidate {
+  id              Int         @id @default(autoincrement())
+  jobId           Int         @map("job_id")
+  name            String
+  email           String?
+  phone           String?
+  source          String? // Referral | Job portal | Walk-in | Website | Agency
+  experienceYears Float?      @map("experience_years")
+  currentCtc      Float?      @map("current_ctc")
+  expectedCtc     Float?      @map("expected_ctc")
+  noticeDays      Int?        @map("notice_days")
+  stage           String      @default("applied") // applied | screening | interview | offered | hired | rejected
+  resumePath      String?     @map("resume_path")
+  resumeMime      String?     @map("resume_mime")
+  notes           String?
+  offeredCtc      Float?      @map("offered_ctc")
+  joiningDate     String?     @map("joining_date")
+  hiredUserId     Int?        @map("hired_user_id")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  job             JobOpening  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  interviews      Interview[]
+
+  @@index([jobId, stage])
+  @@map("candidates")
+}
+
+model Interview {
+  id             Int       @id @default(autoincrement())
+  candidateId    Int       @map("candidate_id")
+  interviewerId  Int       @map("interviewer_id")
+  round          String
+  mode           String // In person | Phone | Video
+  scheduledAt    DateTime  @map("scheduled_at")
+  status         String    @default("scheduled") // scheduled | done | cancelled
+  rating         Int? // 1–5
+  recommendation String? // hire | hold | reject
+  feedback       String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  candidate      Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([interviewerId, scheduledAt])
+  @@map("interviews")
+}
+
+// ---- Training (LMS) ----
+model Course {
+  id           Int                @id @default(autoincrement())
+  title        String
+  description  String?
+  contentUrl   String?            @map("content_url") // video / document / course link
+  durationMins Int?               @map("duration_mins")
+  mandatory    Boolean            @default(false)
+  dueDate      String?            @map("due_date") // YYYY-MM-DD
+  createdById  Int?               @map("created_by_id")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  assignments  CourseAssignment[]
+
+  @@map("courses")
+}
+
+model CourseAssignment {
+  id          Int       @id @default(autoincrement())
+  courseId    Int       @map("course_id")
+  userId      Int       @map("user_id")
+  status      String    @default("assigned") // assigned | completed
+  assignedAt  DateTime  @default(now()) @map("assigned_at")
+  completedAt DateTime? @map("completed_at")
+  course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, userId])
+  @@index([userId])
+  @@map("course_assignments")
+}
+
+// ---- Statutory compliance calendar ----
+model ComplianceTask {
+  id        Int      @id @default(autoincrement())
+  title     String
+  category  String // PF | ESI | TDS | PT | Other
+  dueDate   String   @map("due_date") // YYYY-MM-DD
+  period    String? // the month / quarter the filing covers
+  status    String   @default("pending") // pending | filed
+  filedOn   String?  @map("filed_on")
+  reference String? // challan / acknowledgement number
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([title, dueDate])
+  @@index([dueDate])
+  @@map("compliance_tasks")
 }
 
 model LocationLog {

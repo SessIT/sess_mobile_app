@@ -6,6 +6,8 @@
 // written back to the request row, so it self-corrects if a punch is added or
 // removed later, and it needs no migration.
 const prisma = require('./prisma');
+const { shiftForUser, isWeekOff } = require('./shifts');
+const { holidayMapFor, branchOfUser } = require('./holidays');
 
 const dateOnly = (ymd) => new Date(ymd + 'T00:00:00.000Z');
 const DAY_MS = 86400000;
@@ -31,33 +33,33 @@ async function punchedDays(userId, year) {
 // Reclaimed leave for a user in a year, as Map(leaveTypeId -> days).
 //
 // A day counts as reclaimed when it falls inside an APPROVED leave request, is
-// a working day (Sunday and company holidays are never charged in the first
-// place — see leaves.js countLeaveDays), and has a punch-in. The per-request
+// a working day (the shift's week-offs and company holidays are never charged
+// in the first place — see leaves.js countLeaveDays), and has a punch-in. The per-request
 // total is capped at the days actually charged, so a half-day gives back 0.5.
 async function reclaimedLeaveDays(userId, year) {
   const from = dateOnly(`${year}-01-01`);
   const to = dateOnly(`${year + 1}-01-01`);
-  const [requests, holidayRows] = await Promise.all([
+  const [requests, branchId] = await Promise.all([
     prisma.leaveRequest.findMany({
       where: { userId, status: 'approved', startDate: { gte: from, lt: to } },
       select: { id: true, leaveTypeId: true, startDate: true, endDate: true, days: true },
     }),
-    prisma.holiday.findMany({ where: { date: { gte: from, lt: to } }, select: { date: true } }),
+    branchOfUser(userId),
   ]);
   const byType = new Map(), byRequest = new Map();
   if (requests.length === 0) return { byType, byRequest };
 
-  const holidays = new Set(holidayRows.map((h) => new Date(h.date).toISOString().slice(0, 10)));
-  const punched = await punchedDays(userId, year);
+  // Company-wide + the employee's branch holidays (leave never charges them).
+  const holidays = await holidayMapFor(`${year}-01-01`, `${year}-12-31`, branchId);
+  const [punched, shift] = await Promise.all([punchedDays(userId, year), shiftForUser(userId)]);
 
   for (const r of requests) {
     const s = new Date(r.startDate).getTime();
     const e = new Date(r.endDate).getTime();
     let worked = 0;
     for (let t = s; t <= e; t += DAY_MS) {
-      const dt = new Date(t);
-      if (dt.getUTCDay() === 0) continue; // Sunday — weekly off, never charged
-      const ymd = dt.toISOString().slice(0, 10);
+      const ymd = new Date(t).toISOString().slice(0, 10);
+      if (isWeekOff(shift, ymd)) continue; // weekly off — never charged
       if (holidays.has(ymd)) continue; // holiday — never charged
       if (punched.has(ymd)) worked++;
     }

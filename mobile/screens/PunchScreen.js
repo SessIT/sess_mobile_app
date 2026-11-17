@@ -8,12 +8,11 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { api, API_URL } from '../lib/api';
+import { api, apiUpload, fileUrl } from '../lib/api';
 import { startTracking, stopTracking, TRACK_INTERVAL_MIN, pendingCount } from '../lib/tracker';
 import { GradientHeader, BottomNav, Card, Chip, PrimaryButton } from '../components/ui';
 import { COLORS, GREEN_GRADIENT, RADIUS, SHADOW } from '../lib/theme';
 
-const BASE = API_URL.replace('/api', '');
 
 const fmtTime = (d) => d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '--:--';
 const fmtDuration = (h) => {
@@ -236,10 +235,10 @@ export default function PunchScreen({ navigation }) {
     setBusy(true);
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.3, base64: true, skipProcessing: true, shutterSound: false,
+        quality: 0.3, skipProcessing: true, shutterSound: false,
       });
       if (geo.match) setSiteName(geo.match.name); // auto-fill the matched site
-      setPendingPhoto({ uri: photo.uri, base64: photo.base64 });
+      setPendingPhoto({ uri: photo.uri });
       setCapturedAt(new Date());
     } catch (e) {
       Alert.alert('Camera error', e.message);
@@ -289,14 +288,13 @@ export default function PunchScreen({ navigation }) {
 
       const wasPunchIn = !punchedIn;
       const path = punchedIn ? '/attendance/punch-out' : '/attendance/punch-in';
-      await api(path, {
-        method: 'POST',
-        body: JSON.stringify({
-          ...coords, address,
-          siteName: siteName.trim() || 'SESS',
-          photoBase64: pendingPhoto.base64,
-        }),
-      });
+      // Multipart: the selfie goes as a file part, not base64 JSON — the server
+      // caps JSON bodies at 1 MB now.
+      const fd = new FormData();
+      Object.entries({ ...coords, address, siteName: siteName.trim() || 'SESS' })
+        .forEach(([k, v]) => { if (v != null) fd.append(k, String(v)); });
+      fd.append('photo', { uri: pendingPhoto.uri, name: 'punch.jpg', type: 'image/jpeg' });
+      await apiUpload(path, fd);
       await load();
       setPendingPhoto(null);
       if (wasPunchIn) setSiteName('SESS'); // next punch-ku default reset
@@ -313,8 +311,8 @@ export default function PunchScreen({ navigation }) {
   const detail = detailModal ? {
     label: sessionLabel(detailModal, Math.max(detailIdx, 0)),
     color: detailModal.punchOutTime ? COLORS.primary : COLORS.green,
-    inPhoto: detailModal.punchInPhoto ? `${BASE}/${detailModal.punchInPhoto}` : null,
-    outPhoto: detailModal.punchOutPhoto ? `${BASE}/${detailModal.punchOutPhoto}` : null,
+    inPhoto: fileUrl(detailModal.punchInPhoto),
+    outPhoto: fileUrl(detailModal.punchOutPhoto),
     inTime: fmtTime(detailModal.punchInTime),
     outTime: fmtTime(detailModal.punchOutTime),
     dateStr: new Date(detailModal.punchInTime).toDateString(),
